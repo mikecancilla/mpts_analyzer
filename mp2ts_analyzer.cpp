@@ -6,7 +6,6 @@
 
 extern void DoMyXMLTest(char *pXMLFile);
 
-
 // It all starts here
 int main(int argc, char* argv[])
 {

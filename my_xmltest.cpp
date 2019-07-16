@@ -59,7 +59,6 @@ void PrintChildren(tinyxml2::XMLElement* root, unsigned int indent = 0)
             }
 
             printf(">%s</%s>\n", element->GetText(), element->Value());
-//            printf_xml(indent, "<%s>%s</%s>\n", element->Value(), element->GetText(), element->Value());
         }
 
         element = element->NextSiblingElement();
