@@ -65,6 +65,13 @@ struct AccessUnitElement
     size_t numPackets;
     uint8_t packetSize;
 
+    AccessUnitElement()
+        : startByteLocation(-1)
+        , numPackets(-1)
+        , packetSize(0)
+    {
+    }
+
     AccessUnitElement(size_t startByteLocation, size_t numPackets, uint8_t packetSize)
         : startByteLocation(startByteLocation)
         , numPackets(numPackets)
@@ -73,110 +80,227 @@ struct AccessUnitElement
     }
 };
 
-struct AccessUnit
+struct ElementaryStreamDescriptor
 {
-    long int type;
     std::string name;
+    long type;
+    long pid;
 
-    std::vector<AccessUnitElement> accessUnitElements;
+    ElementaryStreamDescriptor()
+        : name("")
+        , type(-1)
+        , pid(-1)
+    {
+    }
 
-    AccessUnit(long int type, std::string name)
-        : type(type)
-        , name(name)
+    ElementaryStreamDescriptor(std::string name, long int type, long int pid)
+        : name(name)
+        , type(type)
+        , pid(pid)
     {
     }
 };
 
-struct ElementaryStream
+struct AccessUnit
 {
-    std::string name;
-    long int type;
-    long int pid;
+    ElementaryStreamDescriptor esd;
+
+    std::vector<AccessUnitElement> accessUnitElements;
+    
+    AccessUnit()
+    {
+    }
+
+    AccessUnit(std::string name, long int type, long int pid)
+        : esd(name, type, pid)
+    {
+    }
 };
 
-AccessUnit                    gVideoAccessUnit(0, nullptr);
-std::vector<ElementaryStream> gElementaryStreams;
-bool                          gbParsedPMT = false;
-
-bool BuildPacketList(const std::string &pXMLFile)
+struct MpegTSDescriptor
 {
-    tinyxml2::XMLDocument doc;
-	doc.LoadFile(pXMLFile.c_str());
+    std::string fileName;
+    uint8_t packetSize;
 
-    tinyxml2::XMLElement* root = doc.FirstChildElement("file");
+    MpegTSDescriptor()
+        : fileName("")
+        , packetSize(0)
+    {}
+};
 
-    if(NULL == root)
-        return false;
+class MpegTS
+{
+public:
 
-    tinyxml2::XMLElement* element = root->FirstChildElement("packet");
-
-    while(element)
+    MpegTS()
+    : m_bParsedMpegTSDescriptor(false)
+    , m_bParsedPMT(false)
     {
-        if(!gbParsedPMT)
+    }
+
+    bool ParsePMT(tinyxml2::XMLElement* root)
+    {
+        bool bFoundPMT = false;
+
+        tinyxml2::XMLElement* element = root->FirstChildElement("packet");
+
+        while(!bFoundPMT && element)
         {
             tinyxml2::XMLElement* pmt = element->FirstChildElement("program_map_table");
+
             if(pmt)
             {
                 tinyxml2::XMLElement* stream = pmt->FirstChildElement("stream");
                 while(stream)
                 {
-                    ElementaryStream es;
+                    tinyxml2::XMLElement* type_number = stream->FirstChildElement("type_number");
+                    int stream_type = strtol(type_number->GetText(), NULL, 16);
 
-                    tinyxml2::XMLElement* pid = stream->FirstChildElement("pid");
-                    es.pid = strtol(pid->GetText(), NULL, 16);
+                    AccessUnit *pAU = nullptr;
 
-                    tinyxml2::XMLElement* type = stream->FirstChildElement("type_number");
-                    es.type = strtol(type->GetText(), NULL, 16);
-
-                    tinyxml2::XMLElement* typeName = stream->FirstChildElement("type_name");
-                    es.name = typeName->GetText();
-
-                    gElementaryStreams.push_back(es);
-
-                    stream = stream->NextSiblingElement("stream");;
-                }
-
-                gbParsedPMT = true;
-            }
-        }
-        else
-        {
-            tinyxml2::XMLElement* pusi = element->FirstChildElement("payload_unit_start_indicator");
-
-            if(1 == strtol(pusi->GetText(), NULL, 16))
-            {
-                tinyxml2::XMLElement* pid = element->FirstChildElement("pid");
-
-                if(0x31 == strtol(pid->GetText(), NULL, 16))
-                {
-/*
-AccessUnit au;
-struct AccessUnit
-{
-    long int type;
-    std::string name;
-
-    std::vector<AccessUnitElement> accessUnitElements;
-
-    AccessUnit(long int type, std::string name)
-        : type(type)
-        , name(name)
-    {
-    }
-};
-*/
-                    if(0 == gElementaryStreams.size())
+                    switch(stream_type)
                     {
+                        case 0x2: // Mpeg2-Video
+                            pAU = &m_currentVideoAU;
+                        break;
+                        case 0x3:
+                            pAU = &m_currentAudioAU;
+                        break;
                     }
+
+                    if(pAU)
+                    {
+                        tinyxml2::XMLElement* pid = stream->FirstChildElement("pid");
+                        pAU->esd.pid = strtol(pid->GetText(), NULL, 16);
+
+                        tinyxml2::XMLElement* type = stream->FirstChildElement("type_number");
+                        pAU->esd.type = strtol(type->GetText(), NULL, 16);
+
+                        tinyxml2::XMLElement* typeName = stream->FirstChildElement("type_name");
+                        pAU->esd.name = typeName->GetText();
+                    }
+
+                    stream = stream->NextSiblingElement("stream");
                 }
+                
+                bFoundPMT = true;
             }
+
+            element = element->NextSiblingElement("packet");
         }
 
-        element = element->NextSiblingElement("packet");
+        return bFoundPMT;
     }
 
-    return true;
-}
+    bool ParseMpegTSDescriptor(tinyxml2::XMLElement* root)
+    {
+        tinyxml2::XMLElement* element = root->FirstChildElement("name");
+        m_mpegTSDescriptor.fileName = element->GetText();
+
+        element = root->FirstChildElement("packet_size");
+        m_mpegTSDescriptor.packetSize = std::atoi(element->GetText());
+
+        if("" == m_mpegTSDescriptor.fileName ||
+           0 == m_mpegTSDescriptor.packetSize)
+            return false;
+
+        return true;
+    }
+
+    bool ParsePacketList(tinyxml2::XMLElement* root)
+    {
+        if(NULL == root)
+            return false;
+
+        tinyxml2::XMLElement* element = nullptr;
+
+        element = root->FirstChildElement("packet");
+
+        long lastPID = -1;
+
+        while(element)
+        {
+            tinyxml2::XMLElement* pid = element->FirstChildElement("pid");
+            long thisPID = strtol(pid->GetText(), NULL, 16);
+
+            AccessUnit *pAU = nullptr;
+
+            if(m_currentVideoAU.esd.pid == thisPID)
+                pAU = &m_currentVideoAU;
+            else if(m_currentAudioAU.esd.pid == thisPID)
+                pAU = &m_currentAudioAU;
+
+            if(pAU)
+            {
+                tinyxml2::XMLElement* pusi = element->FirstChildElement("payload_unit_start_indicator");
+
+                bool bNewAUSet = false;
+
+                if(1 == strtol(pusi->GetText(), NULL, 16))
+                {
+                    if(pAU->accessUnitElements.size())
+                    {
+                        if(pAU == &m_currentVideoAU)
+                            m_videoAccessUnits.push_back(m_currentVideoAU);
+                        else if(pAU == &m_currentAudioAU)
+                            m_audioAccessUnits.push_back(m_currentAudioAU);
+                    }
+
+                    pAU->accessUnitElements.clear();
+                    bNewAUSet = true;
+                }
+
+                if(-1 != lastPID && thisPID != lastPID)
+                    bNewAUSet = true;
+
+                if(bNewAUSet)
+                {
+                    const tinyxml2::XMLAttribute *attribute = element->FirstAttribute();
+
+                    AccessUnitElement aue;
+                    aue.startByteLocation = attribute->IntValue();
+                    aue.numPackets = 1;
+                    aue.packetSize = m_mpegTSDescriptor.packetSize;
+
+                    pAU->accessUnitElements.push_back(aue);
+                }
+                else
+                {
+                    AccessUnitElement &aue = pAU->accessUnitElements.back();
+                    aue.numPackets++;
+                }
+
+                lastPID = thisPID;
+            }
+
+            element = element->NextSiblingElement("packet");
+        }
+
+        if(m_currentVideoAU.accessUnitElements.size())
+        {
+            m_videoAccessUnits.push_back(m_currentVideoAU);
+            m_currentVideoAU.accessUnitElements.clear();
+        }
+        
+        if(m_currentAudioAU.accessUnitElements.size())
+        {
+            m_audioAccessUnits.push_back(m_currentAudioAU);
+            m_currentAudioAU.accessUnitElements.clear();
+        }
+
+        return true;
+    }
+
+private:
+    MpegTSDescriptor                m_mpegTSDescriptor;
+    std::vector<AccessUnit>         m_videoAccessUnits;
+    std::vector<AccessUnit>         m_audioAccessUnits;
+    AccessUnit                      m_currentVideoAU;
+    AccessUnit                      m_currentAudioAU;
+    bool                            m_bParsedMpegTSDescriptor = false;
+    bool                            m_bParsedPMT = false;
+    //std::vector<ElementaryStream> gElementaryStreams;
+};
 
 // It all starts here
 int main(int argc, char* argv[])
@@ -209,8 +333,20 @@ int main(int argc, char* argv[])
     }
 */
 
+    tinyxml2::XMLDocument doc;
+	doc.LoadFile(argv[1]);
+
+    tinyxml2::XMLElement* root = doc.FirstChildElement("file");
+
+    MpegTS mpts;
+
+    mpts.ParsePMT(root);
+
+    // Get simple info about the file
+    mpts.ParseMpegTSDescriptor(root);
+
     // Build current access units
-    BuildPacketList(argv[1]);
+    mpts.ParsePacketList(root);
 
     // Show as GUI
 }
