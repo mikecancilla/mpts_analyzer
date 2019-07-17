@@ -22,6 +22,16 @@
     distribution.
 */
 
+/*
+    This program is still under development!
+
+    Known Issues:
+
+    - Only handles the first Video and Audio stream
+    - Needs a GUI
+    - Needs to feed a decoder
+*/
+
 #include "tinyxml2.h"
 
 #include <cstdio>
@@ -59,6 +69,46 @@ Value  StreamType                             Value  StreamType
 
 extern void DoMyXMLTest(char *pXMLFile);
 
+typedef enum streamTypes
+{
+    eReserved                                   = 0x0, 
+    eMPEG1_Video                                = 0x1, 
+    eMPEG2_Video                                = 0x2, 
+    eMPEG1_Audio                                = 0x3, 
+    eMPEG2_Audio                                = 0x4, 
+    eISO13818_1_private_sections                = 0x5, 
+    eISO13818_1_PES_private_data                = 0x6, 
+    eISO13522_MHEG                              = 0x7, 
+    eISO13818_1_DSM_CC                          = 0x8, 
+    eISO13818_1_auxiliary                       = 0x9, 
+    eISO13818_6_multi_protocol_encap            = 0xa, 
+    eISO13818_6_DSM_CC_UN_msgs                  = 0xb, 
+    eISO13818_6_stream_descriptors              = 0xc, 
+    eISO13818_6_sections                        = 0xd, 
+    eISO13818_1_auxiliary2                      = 0xe, 
+    eMPEG2_AAC_Audio                            = 0xf, 
+    eMPEG4_Video                                = 0x10,
+    eMPEG4_LATM_AAC_Audio                       = 0x11,
+    eMPEG4_generic                              = 0x12,
+    eISO14496_1_SL_packetized                   = 0x13,
+    eISO13818_6_Synchronized_Download_Protocol  = 0x14,
+    eH264_Video                                 = 0x1b,
+    eDigiCipher_II_Video                        = 0x80,
+    eA52_AC3_Audio                              = 0x81,
+    eHDMV_DTS_Audio                             = 0x82,
+    eLPCM_Audio                                 = 0x83,
+    eSDDS_Audio                                 = 0x84,
+    eATSC_Program_ID                            = 0x85,
+    eDTSHD_Audio                                = 0x86,
+    eEAC3_Audio                                 = 0x87,
+    eDTS_Audio                                  = 0x8a,
+    eA52b_AC3_Audio                             = 0x91,
+    eDVD_SPU_vls_Subtitle                       = 0x92,
+    eSDDS_Audio2                                = 0x94,
+    eMSCODEC_Video                              = 0xa0,
+    ePrivate_ES_VC1                             = 0xea
+} eStreamType;
+
 struct AccessUnitElement
 {
     size_t startByteLocation;
@@ -83,17 +133,17 @@ struct AccessUnitElement
 struct ElementaryStreamDescriptor
 {
     std::string name;
-    long type;
+    eStreamType type;
     long pid;
 
     ElementaryStreamDescriptor()
         : name("")
-        , type(-1)
+        , type(eReserved)
         , pid(-1)
     {
     }
 
-    ElementaryStreamDescriptor(std::string name, long int type, long int pid)
+    ElementaryStreamDescriptor(std::string name, eStreamType type, long int pid)
         : name(name)
         , type(type)
         , pid(pid)
@@ -111,7 +161,7 @@ struct AccessUnit
     {
     }
 
-    AccessUnit(std::string name, long int type, long int pid)
+    AccessUnit(std::string name, eStreamType type, long int pid)
         : esd(name, type, pid)
     {
     }
@@ -160,10 +210,23 @@ public:
 
                     switch(stream_type)
                     {
-                        case 0x2: // Mpeg2-Video
+                        case eMPEG1_Video:
+                        case eMPEG2_Video:
+                        case eMPEG4_Video:
+                        case eH264_Video:
+                        case eDigiCipher_II_Video:
+                        case eMSCODEC_Video:
                             pAU = &m_currentVideoAU;
                         break;
-                        case 0x3:
+
+                        case eMPEG1_Audio:
+                        case eMPEG2_Audio:
+                        case eMPEG2_AAC_Audio:
+                        case eMPEG4_LATM_AAC_Audio:
+                        case eA52_AC3_Audio:
+                        case eHDMV_DTS_Audio:
+                        case eA52b_AC3_Audio:
+                        case eSDDS_Audio:
                             pAU = &m_currentAudioAU;
                         break;
                     }
@@ -174,7 +237,7 @@ public:
                         pAU->esd.pid = strtol(pid->GetText(), NULL, 16);
 
                         tinyxml2::XMLElement* type = stream->FirstChildElement("type_number");
-                        pAU->esd.type = strtol(type->GetText(), NULL, 16);
+                        pAU->esd.type = (eStreamType) strtol(type->GetText(), NULL, 16);
 
                         tinyxml2::XMLElement* typeName = stream->FirstChildElement("type_name");
                         pAU->esd.name = typeName->GetText();
@@ -307,16 +370,14 @@ int main(int argc, char* argv[])
 {
 //    DoMyXMLTest(argv[1]);
 
-/*
     if (0 == argc)
     {
-        fprintf(stderr, "Usage: %s [-g] [-p] [-x] mp2ts_file\n", argv[0]);
-        fprintf(stderr, "-g: Generate an OpenGL GUI representing the MP2TS\n");
-        fprintf(stderr, "-p: Print progress on a single line to stderr\n");
-        fprintf(stderr, "-x: Output extensive xml representation of MP2TS file to stdout\n");
+        fprintf(stderr, "Usage: %s input.xml\n", argv[0]);
+        fprintf(stderr, "  The file input.xml is generated by mp2ts_parser\n");
         return 0;
     }
 
+/*
     for (int i = 0; i < argc - 1; i++)
     {
         if (0 == strcmp("-d", argv[i]))
