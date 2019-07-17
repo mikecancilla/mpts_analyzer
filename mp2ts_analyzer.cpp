@@ -428,14 +428,16 @@ bool RunGUI(MpegTS &mpts)
         {
             for(std::vector<AccessUnit>::iterator i = mpts.m_videoAccessUnits.begin(); i < mpts.m_videoAccessUnits.end(); i++)
             {
-                if(ImGui::TreeNode((void*) frame, "Frame:%d, Name:%s, pid:%ld", frame, i->esd.name.c_str(), i->esd.pid))
+                unsigned int numPackets = 0;
+                for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
+                    numPackets += j->numPackets;
+
+                if(ImGui::TreeNode((void*) frame, "Frame:%d, Name:%s, Packets:%d, PID:%ld", frame, i->esd.name.c_str(), numPackets, i->esd.pid))
                 {
                     for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
                     {
                         if (ImGui::TreeNode((void*)(intptr_t)frame, "Byte Location:%d, Num Packets:%d, Packet Size:%d", j->startByteLocation, j->numPackets, j->packetSize))
-                        {
                             ImGui::TreePop();
-                        }
                     }
 
                     ImGui::TreePop();
@@ -450,14 +452,16 @@ bool RunGUI(MpegTS &mpts)
         {
             for(std::vector<AccessUnit>::iterator i = mpts.m_audioAccessUnits.begin(); i < mpts.m_audioAccessUnits.end(); i++)
             {
-                if(ImGui::TreeNode((void*) frame, "Frame:%d, Name:%s, pid:%ld", frame, i->esd.name.c_str(), i->esd.pid))
+                unsigned int numPackets = 0;
+                for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
+                    numPackets += j->numPackets;
+
+                if(ImGui::TreeNode((void*) frame, "Frame:%d, Name:%s, Packets:%d, PID:%ld", frame, i->esd.name.c_str(), numPackets, i->esd.pid))
                 {
                     for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
                     {
                         if (ImGui::TreeNode((void*)(intptr_t)frame, "Byte Location:%d, Num Packets:%d, Packet Size:%d", j->startByteLocation, j->numPackets, j->packetSize))
-                        {
                             ImGui::TreePop();
-                        }
                     }
 
                     ImGui::TreePop();
