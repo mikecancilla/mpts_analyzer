@@ -3,13 +3,87 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdarg>
+#include <cstdlib>
+#include <string>
+#include <vector>
 
 extern void DoMyXMLTest(char *pXMLFile);
+
+struct AccessUnit
+{
+    std::string auName;
+    size_t startByteLocation;
+    size_t numPackets;
+    uint8_t packetSize;
+
+    AccessUnit(std::string auName, size_t startByteLocation, size_t numPackets, size_t packetSize)
+        : auName(auName)
+        , startByteLocation(startByteLocation)
+        , numPackets(numPackets)
+        , packetSize(packetSize)
+    {
+    }
+};
+
+struct ElementaryStream
+{
+    std::string name;
+    long int pid;
+};
+
+std::vector<AccessUnit> gVideoAccessUnit;
+std::vector<ElementaryStream> gElementaryStreams;
+bool gbParsedPMT = false;
+
+bool BuildPacketList(const std::string &pXMLFile)
+{
+    tinyxml2::XMLDocument doc;
+	doc.LoadFile(pXMLFile.c_str());
+
+    tinyxml2::XMLElement* root = doc.FirstChildElement("file");
+
+    if(NULL == root)
+        return false;
+
+    tinyxml2::XMLElement* element = root->FirstChildElement("packet");
+
+    while(element)
+    {
+        if(!gbParsedPMT)
+        {
+            tinyxml2::XMLElement* pmt = element->FirstChildElement("program_map_table");
+            if(pmt)
+            {
+                tinyxml2::XMLElement* stream = pmt->FirstChildElement("stream");
+                while(stream)
+                {
+                    ElementaryStream es;
+
+                    tinyxml2::XMLElement* pid = stream->FirstChildElement("pid");
+                    es.pid = strtol(pid->GetText(), NULL, 16);
+
+                    tinyxml2::XMLElement* typeName = stream->FirstChildElement("type_name");
+                    es.name = typeName->GetText();
+
+                    gElementaryStreams.push_back(es);
+
+                    stream = stream->NextSiblingElement("stream");;
+                }
+
+                gbParsedPMT = true;
+            }
+        }
+
+        element = element->NextSiblingElement("packet");
+    }
+
+    return true;
+}
 
 // It all starts here
 int main(int argc, char* argv[])
 {
-    DoMyXMLTest(argv[1]);
+//    DoMyXMLTest(argv[1]);
 
 /*
     if (0 == argc)
@@ -36,4 +110,9 @@ int main(int argc, char* argv[])
             g_b_xml = true;
     }
 */
+
+    // Build current access units
+    BuildPacketList(argv[1]);
+
+    // Show as GUI
 }
