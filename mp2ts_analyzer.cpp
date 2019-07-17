@@ -28,7 +28,7 @@
     Known Issues:
 
     - Only handles the first Video and Audio stream
-    - Needs a GUI
+    - GUI does not talk to decoder
     - Needs to feed a decoder
 */
 
@@ -40,6 +40,17 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
+
+#include "imgui.h"
+#include "imgui_impl_glfw_gl3.h"
+
+#define WINDOW_WIDTH 1600
+#define WINDOW_HEIGHT 900
+
+GLFWwindow* g_window = NULL;
 
 /*
 Taken from: http://www.sno.phy.queensu.ca/~phil/exiftool/TagNames/M2TS.html
@@ -354,16 +365,124 @@ public:
         return true;
     }
 
-private:
+public:
     MpegTSDescriptor                m_mpegTSDescriptor;
     std::vector<AccessUnit>         m_videoAccessUnits;
     std::vector<AccessUnit>         m_audioAccessUnits;
+
+private:
     AccessUnit                      m_currentVideoAU;
     AccessUnit                      m_currentAudioAU;
     bool                            m_bParsedMpegTSDescriptor = false;
     bool                            m_bParsedPMT = false;
     //std::vector<ElementaryStream> gElementaryStreams;
 };
+
+bool RunGUI(MpegTS &mpts)
+{
+    unsigned int err = GLFW_NO_ERROR;
+
+    /* Initialize the library */
+    if(!glfwInit())
+        return false;
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+    /* Create a windowed mode window and its OpenGL context */
+    g_window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Mpeg2-TS Parser GUI", NULL, NULL);
+    if (!g_window)
+    {
+        fprintf(stderr, "Could not create GL window! Continuing without a GUI!\n");
+        glfwTerminate();
+        return false;
+    }
+
+    /* Make the window's context current */
+    glfwMakeContextCurrent(g_window);
+
+    glfwSwapInterval(1);
+
+    if(glewInit() != GLEW_OK)
+    {
+        fprintf(stderr, "Glew Initialization Error! Continuing without a GUI!\n");
+        glfwTerminate();
+        return false;
+    }
+
+	ImGui::CreateContext();
+	ImGui_ImplGlfwGL3_Init(g_window, true);
+	ImGui::StyleColorsDark();
+
+    while(!glfwWindowShouldClose(g_window))
+    {
+		glClearColor(0.f, 0.f, 0.f, 1.f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+		ImGui_ImplGlfwGL3_NewFrame();
+
+        unsigned int frame = 1;
+
+        if (ImGui::CollapsingHeader("Video"))
+        {
+            for(std::vector<AccessUnit>::iterator i = mpts.m_videoAccessUnits.begin(); i < mpts.m_videoAccessUnits.end(); i++)
+            {
+                if(ImGui::TreeNode((void*) frame, "Frame:%d, Name:%s, pid:%ld", frame, i->esd.name.c_str(), i->esd.pid))
+                {
+                    for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
+                    {
+                        if (ImGui::TreeNode((void*)(intptr_t)frame, "Byte Location:%d, Num Packets:%d, Packet Size:%d", j->startByteLocation, j->numPackets, j->packetSize))
+                        {
+                            ImGui::TreePop();
+                        }
+                    }
+
+                    ImGui::TreePop();
+                }
+
+                frame++;
+            }
+        }
+
+        frame = 1;
+        if (ImGui::CollapsingHeader("Audio"))
+        {
+            for(std::vector<AccessUnit>::iterator i = mpts.m_audioAccessUnits.begin(); i < mpts.m_audioAccessUnits.end(); i++)
+            {
+                if(ImGui::TreeNode((void*) frame, "Frame:%d, Name:%s, pid:%ld", frame, i->esd.name.c_str(), i->esd.pid))
+                {
+                    for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
+                    {
+                        if (ImGui::TreeNode((void*)(intptr_t)frame, "Byte Location:%d, Num Packets:%d, Packet Size:%d", j->startByteLocation, j->numPackets, j->packetSize))
+                        {
+                            ImGui::TreePop();
+                        }
+                    }
+
+                    ImGui::TreePop();
+                }
+
+                frame++;
+            }
+        }
+
+		ImGui::Render();
+		ImGui_ImplGlfwGL3_RenderDrawData(ImGui::GetDrawData());
+
+        /* Swap front and back buffers */
+        glfwSwapBuffers(g_window);
+
+        /* Poll for and process events */
+        glfwPollEvents();
+    }
+
+  	ImGui_ImplGlfwGL3_Shutdown();
+	ImGui::DestroyContext();
+    glfwTerminate();
+
+    return true;
+}
 
 // It all starts here
 int main(int argc, char* argv[])
@@ -410,4 +529,8 @@ int main(int argc, char* argv[])
     mpts.ParsePacketList(root);
 
     // Show as GUI
+    if(RunGUI(mpts))
+        return 0;
+
+    return 1;
 }
