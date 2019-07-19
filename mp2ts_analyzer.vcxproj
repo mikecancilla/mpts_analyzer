@@ -76,7 +76,7 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)third_party\imgui;$(SolutionDir)third_party\glfw\include;$(SolutionDir)third_party\glew\include;$(SolutionDir)third_party\tinyxml2;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)\opengl_classes;$(SolutionDir)third_party\glm;$(SolutionDir)third_party\imgui;$(SolutionDir)third_party\glfw\include;$(SolutionDir)third_party\glew\include;$(SolutionDir)third_party\tinyxml2;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -85,12 +85,12 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)third_party\imgui;$(SolutionDir)third_party\glfw\include;$(SolutionDir)third_party\glew\include;$(SolutionDir)third_party\tinyxml2;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)\opengl_classes;$(SolutionDir)third_party\glm;$(SolutionDir)third_party\imgui;$(SolutionDir)third_party\glfw\include;$(SolutionDir)third_party\glew\include;$(SolutionDir)third_party\tinyxml2;$(SolutionDir)third_party\ffmpeg\include;$(SolutionDir)third_party\stb_image;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>GLEW_STATIC;_MBCS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
-      <AdditionalLibraryDirectories>$(SolutionDir)third_party\glew\lib\Release\x64;$(SolutionDir)third_party\glfw\lib-vc2015;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>glfw3.lib;opengl32.lib;user32.lib;gdi32.lib;shell32.lib;glew32s.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(SolutionDir)third_party\glew\lib\Release\x64;$(SolutionDir)third_party\glfw\lib-vc2015;$(SolutionDir)third_party\ffmpeg\lib\lib_debug;$(SolutionDir)third_party\zlib-1.2.11;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>glfw3.lib;opengl32.lib;user32.lib;gdi32.lib;shell32.lib;glew32s.lib;Bcrypt.lib;winmm.lib;libswresample.a;libswscale.a;libavdevice.a;libavcodec.a;libavformat.a;libavfilter.a;libavutil.a;libpostproc.a;Ws2_32.lib;Secur32.lib;zlib.lib;libx264.lib;legacy_stdio_definitions.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -101,7 +101,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)third_party\imgui;$(SolutionDir)third_party\glfw\include;$(SolutionDir)third_party\glew\include;$(SolutionDir)third_party\tinyxml2;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)\opengl_classes;$(SolutionDir)third_party\glm;$(SolutionDir)third_party\imgui;$(SolutionDir)third_party\glfw\include;$(SolutionDir)third_party\glew\include;$(SolutionDir)third_party\tinyxml2;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -116,7 +116,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(SolutionDir)third_party\imgui;$(SolutionDir)third_party\glfw\include;$(SolutionDir)third_party\glew\include;$(SolutionDir)third_party\tinyxml2;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)\opengl_classes;$(SolutionDir)third_party\glm;$(SolutionDir)third_party\imgui;$(SolutionDir)third_party\glfw\include;$(SolutionDir)third_party\glew\include;$(SolutionDir)third_party\tinyxml2;$(SolutionDir)third_party\ffmpeg\include;$(SolutionDir)third_party\stb_image;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>GLEW_STATIC;_MBCS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -128,15 +128,30 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="mp2ts_analyzer.cpp" />
-    <ClCompile Include="my_xmltest.cpp" />
+    <ClCompile Include="opengl_classes\IndexBuffer.cpp" />
+    <ClCompile Include="opengl_classes\Renderer.cpp" />
+    <ClCompile Include="opengl_classes\Shader.cpp" />
+    <ClCompile Include="opengl_classes\Texture.cpp" />
+    <ClCompile Include="opengl_classes\VertexArray.cpp" />
+    <ClCompile Include="opengl_classes\VertexBuffer.cpp" />
+    <ClCompile Include="tests\ffmpeg_opengl_test.cpp" />
+    <ClCompile Include="tests\my_xmltest.cpp" />
     <ClCompile Include="third_party\imgui\imgui.cpp" />
     <ClCompile Include="third_party\imgui\imgui_demo.cpp" />
     <ClCompile Include="third_party\imgui\imgui_draw.cpp" />
     <ClCompile Include="third_party\imgui\imgui_impl_glfw_gl3.cpp" />
     <ClCompile Include="third_party\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="third_party\stb_image\stb_image.cpp" />
     <ClCompile Include="third_party\tinyxml2\tinyxml2.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="opengl_classes\IndexBuffer.h" />
+    <ClInclude Include="opengl_classes\Renderer.h" />
+    <ClInclude Include="opengl_classes\Shader.h" />
+    <ClInclude Include="opengl_classes\Texture.h" />
+    <ClInclude Include="opengl_classes\VertexArray.h" />
+    <ClInclude Include="opengl_classes\VertexBuffer.h" />
+    <ClInclude Include="opengl_classes\VertexBufferLayout.h" />
     <ClInclude Include="third_party\imgui\imconfig.h" />
     <ClInclude Include="third_party\imgui\imgui.h" />
     <ClInclude Include="third_party\imgui\imgui_impl_glfw_gl3.h" />
@@ -144,6 +159,9 @@
     <ClInclude Include="third_party\imgui\imstb_rectpack.h" />
     <ClInclude Include="third_party\imgui\imstb_textedit.h" />
     <ClInclude Include="third_party\imgui\imstb_truetype.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Basic.shader" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

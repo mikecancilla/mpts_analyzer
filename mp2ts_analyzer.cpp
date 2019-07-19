@@ -50,7 +50,7 @@
 #define WINDOW_WIDTH 1600
 #define WINDOW_HEIGHT 900
 
-GLFWwindow* g_window = NULL;
+static GLFWwindow* g_window = NULL;
 
 /*
 Taken from: http://www.sno.phy.queensu.ca/~phil/exiftool/TagNames/M2TS.html
@@ -79,6 +79,7 @@ Value  StreamType                             Value  StreamType
 */
 
 extern void DoMyXMLTest(char *pXMLFile);
+extern int DoFFMpegOpenGLTest(const std::string &inFileName);
 
 typedef enum streamTypes
 {
@@ -492,6 +493,12 @@ bool RunGUI(MpegTS &mpts)
 int main(int argc, char* argv[])
 {
 //    DoMyXMLTest(argv[1]);
+
+    if(1)
+    {
+        DoFFMpegOpenGLTest("F:\\streams\\mpeg2\\girl5.mpg");
+        return 0;
+    }
 
     if (0 == argc)
     {
