@@ -496,7 +496,7 @@ int main(int argc, char* argv[])
 
     if(1)
     {
-        DoFFMpegOpenGLTest("F:\\streams\\mpeg2\\girl5.mpg");
+        DoFFMpegOpenGLTest("F:\\streams\\mpeg2\\muppets_take_manhattan.mpg");
         return 0;
     }
 

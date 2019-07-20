@@ -4,6 +4,7 @@
 #include <string>
 #include <iostream>
 
+#include "Renderer.h"
 #include "Texture.h"
 #include "VertexBufferLayout.h"
 
@@ -25,6 +26,7 @@ extern "C"
     #include <libswresample/swresample.h>
     #include <libavutil/frame.h>
     #include <libswscale/swscale.h>
+    #include <libavutil/imgutils.h>
 }
 
 typedef struct StreamContext {
@@ -47,6 +49,105 @@ static unsigned int g_texture_id = 0;
 #define WINDOW_HEIGHT 900
 
 static GLFWwindow* g_window = NULL;
+static int g_textureID = 0;
+
+class TextureTest
+{
+public:
+
+    TextureTest(const std::string &imageFileName)
+	{
+		// Create the shader
+		m_Shader = std::make_unique<Shader>("Basic.shader");
+
+		// Bind the shader
+		m_Shader->Bind();
+
+        if("" != imageFileName)
+		    m_Texture = std::make_unique<Texture>(imageFileName);
+        else
+            m_Texture = NULL;
+
+		m_Shader->SetUniform1i("u_Texture", 0);
+
+        int w, h;
+        glfwGetWindowSize(g_window, &w, &h);
+        m_Proj = glm::ortho(0.f, (float) w, 0.f, (float) h, -1.f, 1.f);
+
+        float positions[] = {
+            0, 0, 0.f, 0.f, // Bottom Left, 0
+			w, 0, 1.f, 0.f, // Bottom Right, 1
+			w, h, 1.f, 1.f, // Top Right, 2
+            0, h, 0.f, 1.f  // Top Left, 3
+		};
+
+		unsigned short indicies[] = {
+			0, 1, 2,
+			2, 3, 0
+		};
+
+		GLCall(glEnable(GL_BLEND));
+		GLCall(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+
+		// Create and Bind the vertex array
+		m_VAO = std::make_unique<VertexArray>();
+
+		// Create and Bind the vertex buffer
+		m_VertexBuffer = std::make_unique<VertexBuffer>(positions, 4 * 4 * sizeof(float));
+
+		// Define the layout of the vertex buffer memory
+		VertexBufferLayout layout;
+		layout.Push<float>(2);
+		layout.Push<float>(2);
+
+		m_VAO->AddBuffer(*m_VertexBuffer, layout);
+
+		// Create and Bind the index buffer
+		m_IndexBuffer = std::make_unique<IndexBuffer>(indicies, 6);
+    }
+
+    ~TextureTest()
+    {
+    }
+
+    void Render()
+    {
+		Renderer renderer;
+
+		m_Texture->Bind();
+
+		glm::mat4 mvp = m_Proj;
+
+        m_Shader->Bind();
+		m_Shader->SetUniformMat4f("u_MVP", mvp);
+		renderer.Draw(*m_VAO, *m_IndexBuffer, *m_Shader);
+	}
+
+    void Render(uint8_t *pFrame, int w, int h)
+    {
+		Renderer renderer;
+
+        if(NULL == m_Texture)
+		    m_Texture = std::make_unique<Texture>(pFrame, w, h);
+
+		m_Texture->Bind();
+
+		glm::mat4 mvp = m_Proj;
+
+        m_Shader->Bind();
+		m_Shader->SetUniformMat4f("u_MVP", mvp);
+		renderer.Draw(*m_VAO, *m_IndexBuffer, *m_Shader);
+
+        m_Texture = NULL;
+	}
+
+	std::unique_ptr<VertexArray> m_VAO;
+	std::unique_ptr<VertexBuffer> m_VertexBuffer;
+	std::unique_ptr<IndexBuffer> m_IndexBuffer;
+	std::unique_ptr<Shader> m_Shader;
+	std::unique_ptr<Texture> m_Texture;
+	glm::mat4 m_Proj;
+};
 
 int OpenInputFile(const std::string &inFileName)
 {
@@ -141,162 +242,140 @@ int OpenInputFile(const std::string &inFileName)
 
 #pragma warning(disable:4996)
 
-bool WriteFrame(AVCodecContext *dec_ctx, AVFrame *frame, int frame_num)
+static void SaveFrame(AVFrame *pFrame, int width, int height, int iFrame)
 {
-    struct SwsContext *img_convert_ctx = NULL;
+    FILE *pFile;
+    char szFilename[32];
+    int  y;
 
-    // Allocate an AVFrame structure
-    AVFrame *pFrameRGB = av_frame_alloc();
-    if(pFrameRGB==NULL)
+    // Open file
+    sprintf(szFilename, "frame%d.ppm", iFrame);
+    pFile=fopen(szFilename, "wb");
+    if(pFile==NULL)
+        return;
+
+    // Write header
+    fprintf(pFile, "P6\n%d %d\n255\n", width, height);
+
+    // Write pixel data
+    for(y=0; y<height; y++)
+        fwrite(pFrame->data[0]+y*pFrame->linesize[0], 1, width*3, pFile);
+
+    // Close file
+    fclose(pFile);
+}
+
+static void SaveFrame(uint8_t *pData, int width, int height, int linesize, int iFrame)
+{
+    FILE *pFile;
+    char szFilename[32];
+    int  y;
+
+    // Open file
+    sprintf(szFilename, "frame%d.ppm", iFrame);
+    pFile=fopen(szFilename, "wb");
+    if(pFile==NULL)
+        return;
+
+    // Write header
+    fprintf(pFile, "P6\n%d %d\n255\n", width, height);
+
+    // Write pixel data
+    for(y=0; y<height; y++)
+        fwrite(pData+y*linesize, 1, width*3, pFile);
+
+    // Close file
+    fclose(pFile);
+}
+
+static void DeStride(uint8_t *pData, int width, int height, int linesize, uint8_t *buffer)
+{
+    //fwrite(pData+y*linesize, 1, width*3, pFile);
+
+    // Write pixel data
+    for(int y=0; y<height; y++)
+        memcpy(buffer+(y*width*3), pData+(y*linesize), width*3);
+}
+
+bool WriteFrame(AVCodecContext *dec_ctx, AVFrame *frame, int frame_num,
+                TextureTest *pTest, Renderer &renderer)
+{
+    uint8_t *dst_data[4];
+    int dst_linesize[4];
+    enum AVPixelFormat dst_pix_fmt = AV_PIX_FMT_RGBA;
+    struct SwsContext *sws_ctx = NULL;
+
+    // create scaling context
+    sws_ctx = sws_getContext(frame->width, frame->height, (enum AVPixelFormat) frame->format,
+                             frame->width, frame->height, dst_pix_fmt,
+                             SWS_BILINEAR, NULL, NULL, NULL);
+    if (!sws_ctx)
+    {
+        fprintf(stderr,
+                "Impossible to create scale context for the conversion "
+                "fmt:%s s:%dx%d -> fmt:%s s:%dx%d\n",
+                av_get_pix_fmt_name((enum AVPixelFormat) frame->format), frame->width, frame->height,
+                av_get_pix_fmt_name(dst_pix_fmt), frame->width, frame->height);
         return false;
+    }
 
+    int dst_bufsize = 0;
+
+    // buffer is going to be written to rawvideo file, no alignment
+    if ((dst_bufsize = av_image_alloc(dst_data, dst_linesize,
+                              frame->width, frame->height, dst_pix_fmt, 1)) < 0)
+    {
+        fprintf(stderr, "Could not allocate destination image\n");
+        return false;
+    }
+
+    // We need to flip the video image
+    //  See: https://lists.ffmpeg.org/pipermail/ffmpeg-user/2011-May/000976.html
+
+    frame->data[0] += frame->linesize[0] * (frame->height - 1);
+    frame->linesize[0] = -(frame->linesize[0]);
+
+    frame->data[1] += frame->linesize[1] * ((frame->height/2) - 1);
+    frame->linesize[1] = -(frame->linesize[1]);
+
+    frame->data[2] += frame->linesize[2] * ((frame->height/2) - 1);
+    frame->linesize[2] = -(frame->linesize[2]);
+
+    /* convert to destination format */
+    sws_scale(sws_ctx, (const uint8_t * const*) frame->data,
+                frame->linesize, 0, frame->height, dst_data, dst_linesize);
+
+    // Save the frame to disk, only works with 24 bpp
+    //SaveFrame(dst_data[0], frame->width, frame->height, dst_linesize[0], frame_num);
+    //return true;
+
+    /*
     // Determine required buffer size and allocate buffer
     int numBytes = avpicture_get_size(AV_PIX_FMT_RGB24,
-                                      dec_ctx->width,
-                                      dec_ctx->height);
+                                      frame->width,
+                                      frame->height);
 
     uint8_t *buffer = (uint8_t*) malloc(numBytes);
 
-    // Assign appropriate parts of buffer to image planes in pFrameRGB
-    avpicture_fill((AVPicture *)pFrameRGB,
-                    buffer,
-                    AV_PIX_FMT_RGB24,
-                    dec_ctx->width,
-                    dec_ctx->height);
+    DeStride(dst_data[0], frame->width, frame->height, dst_linesize[0], buffer);
+    */
 
-	// Convert the image into YUV format that SDL uses
-	if(img_convert_ctx == NULL) {
-		img_convert_ctx = sws_getContext(dec_ctx->width, dec_ctx->height, 
-                                         dec_ctx->pix_fmt, 
-                                         dec_ctx->width, dec_ctx->height,
-                                         AV_PIX_FMT_RGB24, SWS_BICUBIC,
-                                         NULL, NULL, NULL);
+	GLCall(glClearColor(0.f, 0.f, 0.f, 1.f));
 
-		if(img_convert_ctx == NULL) {
-			fprintf(stderr, "Cannot initialize the conversion context!\n");
-			exit(1);
-		}
-	}
+    renderer.Clear();
+	pTest->Render(dst_data[0], dec_ctx->width, dec_ctx->height);
 
-	int ret = sws_scale(img_convert_ctx, frame->data, frame->linesize, 0, 
-						dec_ctx->height, pFrameRGB->data, pFrameRGB->linesize);
+    // Swap front and back buffers
+    GLCall(glfwSwapBuffers(g_window));
 
-    // Save the frame to disk
-    //SaveFrame(pFrameRGB, dec_ctx->width, dec_ctx->height, frame_num);
+    // Poll for and process events
+    GLCall(glfwPollEvents());
 
-    //glBindTexture(GL_TEXTURE_2D, texture);
-    //gluBuild2DMipmaps(GL_TEXTURE_2D, 3, pCodecCtx->width, pCodecCtx->height, GL_RGB, GL_UNSIGNED_INT, pFrameRGB->data);
-    GLCall(glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, dec_ctx->width, dec_ctx->height, GL_RGB, GL_UNSIGNED_BYTE, pFrameRGB->data[0]));
-    //GLCall(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, dec_ctx->width, dec_ctx->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, (const void*) pFrameRGB->data[0]));
-
-    GLCall(glClearColor(0.f, 0.f, 0.f, 1.f));
-    GLCall(glClear(GL_COLOR_BUFFER_BIT));
-
-    GLCall(glColor3f(1,1,1));
-    //glBindTexture(GL_TEXTURE_2D, texture);
-    GLCall(glBegin(GL_QUADS));
-
-        GLCall(glTexCoord2f(0,1));
-        GLCall(glVertex3f(0,0,0));
-
-        GLCall(glTexCoord2f(1,1));
-        GLCall(glVertex3f(dec_ctx->width, 0, 0));
-
-        GLCall(glTexCoord2f(1,0));
-        GLCall(glVertex3f(dec_ctx->width, dec_ctx->height, 0));
-
-        GLCall(glTexCoord2f(0,0));
-        GLCall(glVertex3f(0, dec_ctx->height, 0));
-
-    GLCall(glEnd());
-
-    /* Swap front and back buffers */
-    glfwSwapBuffers(g_window);
-
-    /* Poll for and process events */
-    glfwPollEvents();
-
-    // Free the RGB image
-    free(buffer);
-    av_free(pFrameRGB);
+    av_freep(&dst_data[0]);
+    sws_freeContext(sws_ctx);
 
     return true;
 }
-
-class TextureTest
-{
-public:
-    TextureTest(const std::string &imageFileName)
-	{
-		// Create the shader
-		m_Shader = std::make_unique<Shader>("Basic.shader");
-
-		// Bind the shader
-		m_Shader->Bind();
-
-		m_Texture = std::make_unique<Texture>(imageFileName);
-		m_Shader->SetUniform1i("u_Texture", 0);
-
-        int w, h;
-        glfwGetWindowSize(g_window, &w, &h);
-        m_Proj = glm::ortho(0.f, (float) w, 0.f, (float) h, -1.f, 1.f);
-
-        float positions[] = {
-            0, 0, 0.f, 0.f, // Bottom Left, 0
-			w, 0, 1.f, 0.f, // Bottom Right, 1
-			w, h, 1.f, 1.f, // Top Right, 2
-            0, h, 0.f, 1.f  // Top Left, 3
-		};
-
-		unsigned short indicies[] = {
-			0, 1, 2,
-			2, 3, 0
-		};
-
-		GLCall(glEnable(GL_BLEND));
-		GLCall(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
-
-		// Create and Bind the vertex array
-		m_VAO = std::make_unique<VertexArray>();
-
-		// Create and Bind the vertex buffer
-		m_VertexBuffer = std::make_unique<VertexBuffer>(positions, 4 * 4 * sizeof(float));
-
-		// Define the layout of the vertex buffer memory
-		VertexBufferLayout layout;
-		layout.Push<float>(2);
-		layout.Push<float>(2);
-
-		m_VAO->AddBuffer(*m_VertexBuffer, layout);
-
-		// Create and Bind the index buffer
-		m_IndexBuffer = std::make_unique<IndexBuffer>(indicies, 6);
-    }
-
-    ~TextureTest()
-    {
-    }
-
-    void Render()
-    {
-		Renderer renderer;
-
-		m_Texture->Bind();
-
-		glm::mat4 mvp = m_Proj;
-
-        m_Shader->Bind();
-		m_Shader->SetUniformMat4f("u_MVP", mvp);
-		renderer.Draw(*m_VAO, *m_IndexBuffer, *m_Shader);
-	}
-
-	std::unique_ptr<VertexArray> m_VAO;
-	std::unique_ptr<VertexBuffer> m_VertexBuffer;
-	std::unique_ptr<IndexBuffer> m_IndexBuffer;
-	std::unique_ptr<Shader> m_Shader;
-	std::unique_ptr<Texture> m_Texture;
-	glm::mat4 m_Proj;
-};
 
 int InitOpenGL()
 {
@@ -367,13 +446,18 @@ int DoFFMpegOpenGLTest(const std::string &inFileName)
 
     return 0;
 */
-
     av_register_all();
 
     avfilter_register_all();
 
     if(0 != OpenInputFile(inFileName))
         return -1;
+
+    if(0 != InitOpenGL())
+        return -1;
+
+    TextureTest *test = new TextureTest("");
+    Renderer renderer;
 
     AVPacket packet;
 
@@ -426,7 +510,7 @@ int DoFFMpegOpenGLTest(const std::string &inFileName)
             }
 
             if (ret >= 0)
-                WriteFrame(g_stream_ctx[stream_index].dec_ctx, frame, frame_num++);
+                WriteFrame(g_stream_ctx[stream_index].dec_ctx, frame, frame_num++, test, renderer);
         }
     }
 
@@ -435,6 +519,10 @@ int DoFFMpegOpenGLTest(const std::string &inFileName)
 
     if(g_ifmt_ctx)
         avformat_close_input(&g_ifmt_ctx);
+
+    delete test;
+
+    CloseOpenGL();
 
     return ret;
 }
