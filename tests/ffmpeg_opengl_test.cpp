@@ -36,14 +36,13 @@ typedef struct StreamContext {
 } StreamContext;
 
 // Describes the input file
-AVFormatContext     *g_ifmt_ctx = NULL;
+static AVFormatContext     *g_ifmt_ctx = NULL;
 //FilteringContext    *g_filter_ctx = NULL;
-StreamContext       *g_stream_ctx = NULL;
+static StreamContext       *g_stream_ctx = NULL;
 
 static char g_error[AV_ERROR_MAX_STRING_SIZE] = {0};
 static double g_total_duration = 0;
 static double g_total_frames = 0;
-static unsigned int g_texture_id = 0;
 
 #define WINDOW_WIDTH 1600
 #define WINDOW_HEIGHT 900
@@ -149,7 +148,7 @@ public:
 	glm::mat4 m_Proj;
 };
 
-int OpenInputFile(const std::string &inFileName)
+static int OpenInputFile(const std::string &inFileName)
 {
     int ret;
     unsigned int i;
@@ -297,13 +296,14 @@ static void DeStride(uint8_t *pData, int width, int height, int linesize, uint8_
         memcpy(buffer+(y*width*3), pData+(y*linesize), width*3);
 }
 
-bool WriteFrame(AVCodecContext *dec_ctx, AVFrame *frame, int frame_num,
-                TextureTest *pTest, Renderer &renderer)
+static bool WriteFrame(AVCodecContext *dec_ctx, AVFrame *frame, int frame_num,
+                TextureTest *pTest)
 {
     uint8_t *dst_data[4];
     int dst_linesize[4];
     enum AVPixelFormat dst_pix_fmt = AV_PIX_FMT_RGBA;
     struct SwsContext *sws_ctx = NULL;
+    Renderer renderer;
 
     // create scaling context
     sws_ctx = sws_getContext(frame->width, frame->height, (enum AVPixelFormat) frame->format,
@@ -321,9 +321,9 @@ bool WriteFrame(AVCodecContext *dec_ctx, AVFrame *frame, int frame_num,
 
     int dst_bufsize = 0;
 
-    // buffer is going to be written to rawvideo file, no alignment
+    // buffer is going to be rawvideo file, no alignment
     if ((dst_bufsize = av_image_alloc(dst_data, dst_linesize,
-                              frame->width, frame->height, dst_pix_fmt, 1)) < 0)
+                                      frame->width, frame->height, dst_pix_fmt, 1)) < 0)
     {
         fprintf(stderr, "Could not allocate destination image\n");
         return false;
@@ -342,8 +342,13 @@ bool WriteFrame(AVCodecContext *dec_ctx, AVFrame *frame, int frame_num,
     frame->linesize[2] = -(frame->linesize[2]);
 
     /* convert to destination format */
-    sws_scale(sws_ctx, (const uint8_t * const*) frame->data,
-                frame->linesize, 0, frame->height, dst_data, dst_linesize);
+    sws_scale(sws_ctx,
+              (const uint8_t * const*) frame->data,
+              frame->linesize,
+              0,
+              frame->height,
+              dst_data,
+              dst_linesize);
 
     // Save the frame to disk, only works with 24 bpp
     //SaveFrame(dst_data[0], frame->width, frame->height, dst_linesize[0], frame_num);
@@ -377,7 +382,7 @@ bool WriteFrame(AVCodecContext *dec_ctx, AVFrame *frame, int frame_num,
     return true;
 }
 
-int InitOpenGL()
+static int InitOpenGL()
 {
     /* Initialize the library */
     if(!glfwInit())
@@ -411,7 +416,7 @@ int InitOpenGL()
     return 0;
 }
 
-int CloseOpenGL()
+static int CloseOpenGL()
 {
     glfwTerminate();
     return 0;
@@ -457,7 +462,6 @@ int DoFFMpegOpenGLTest(const std::string &inFileName)
         return -1;
 
     TextureTest *test = new TextureTest("");
-    Renderer renderer;
 
     AVPacket packet;
 
@@ -480,9 +484,6 @@ int DoFFMpegOpenGLTest(const std::string &inFileName)
         //If the packet is from the video stream
         if(g_ifmt_ctx->streams[stream_index]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
         {
-            //Decode the video
-            //avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, &packet);
-
             // Send a packet to the decoder
             ret = avcodec_send_packet(g_stream_ctx[stream_index].dec_ctx, &packet);
 
@@ -510,7 +511,7 @@ int DoFFMpegOpenGLTest(const std::string &inFileName)
             }
 
             if (ret >= 0)
-                WriteFrame(g_stream_ctx[stream_index].dec_ctx, frame, frame_num++, test, renderer);
+                WriteFrame(g_stream_ctx[stream_index].dec_ctx, frame, frame_num++, test);
         }
     }
 
