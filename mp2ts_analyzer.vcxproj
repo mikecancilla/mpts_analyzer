@@ -89,7 +89,6 @@
       <AdditionalIncludeDirectories>$(SolutionDir)\opengl_classes;$(SolutionDir)third_party\glm;$(SolutionDir)third_party\imgui;$(SolutionDir)third_party\glfw\include;$(SolutionDir)third_party\glew\include;$(SolutionDir)third_party\tinyxml2;$(SolutionDir)third_party\ffmpeg\include;$(SolutionDir)third_party\stb_image;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>GLEW_STATIC;_MBCS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <ShowIncludes>true</ShowIncludes>
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>$(SolutionDir)third_party\glew\lib\Release\x64;$(SolutionDir)third_party\glfw\lib-vc2015;$(SolutionDir)third_party\ffmpeg\lib\lib_debug;$(SolutionDir)third_party\zlib-1.2.11;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>

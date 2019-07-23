@@ -303,6 +303,8 @@ bool RunGUI(MpegTS_XML &mpts)
 
     avfilter_register_all();
 
+    av_log_set_level(AV_LOG_QUIET);
+
     if(0 != OpenInputFile(mpts.m_mpegTSDescriptor.fileName))
         return false;
 
@@ -324,7 +326,9 @@ bool RunGUI(MpegTS_XML &mpts)
     bool bNeedFrame = true;
 
     AVFrame *showFrame = NULL;
-    int video_stream_index = 0;
+    int videoStreamIndex = 0;
+    int frameNumberToDisplay = 1;
+    int framesDecoded = 0;
 
     Renderer renderer;
 
@@ -334,80 +338,90 @@ bool RunGUI(MpegTS_XML &mpts)
         renderer.Clear();
 
         // If still frames to read
-        if(bNeedFrame && av_read_frame(g_ifmt_ctx, &packet) >= 0)
+        if(bNeedFrame)
         {
-            int stream_index = packet.stream_index;
-
-            //If the packet is from the video stream
-            if(g_ifmt_ctx->streams[stream_index]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
+            if(av_read_frame(g_ifmt_ctx, &packet) >= 0)
             {
-                video_stream_index = stream_index;
+                int streamIndex = packet.stream_index;
 
-                // Send a packet to the decoder
-                ret = avcodec_send_packet(g_stream_ctx[stream_index].dec_ctx, &packet);
-
-                // Unref the packet
-                av_packet_unref(&packet);
-
-                if (ret < 0)
+                //If the packet is from the video stream
+                if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
                 {
-                    av_log(NULL, AV_LOG_ERROR, "Error while sending a packet to the decoder\n");
-                    break;
-                }
+                    videoStreamIndex = streamIndex;
 
-                AVFrame *frame = av_frame_alloc();
+                    // Send a packet to the decoder
+                    ret = avcodec_send_packet(g_stream_ctx[streamIndex].dec_ctx, &packet);
 
-                if (!frame)
-                {
-                    av_log(NULL, AV_LOG_ERROR, "Decode thread could not allocate frame\n");
-                    ret = AVERROR(ENOMEM);
-                    break;
-                }
+                    // Unref the packet
+                    av_packet_unref(&packet);
 
-                // Get a frame from the decoder
-                ret = avcodec_receive_frame(g_stream_ctx[stream_index].dec_ctx, frame);
-                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-                {
-                    av_frame_free(&frame);
-                    continue;
-                }
-                else if (ret < 0)
-                {
-                    av_log(NULL, AV_LOG_ERROR, "Error while receiving a frame from the decoder\n");
-                    av_frame_free(&frame);
-                    break;
-                }
+                    if (ret < 0)
+                    {
+                        av_log(NULL, AV_LOG_ERROR, "Error while sending a packet to the decoder\n");
+                        break;
+                    }
 
-                if (ret >= 0)
-                {
-                    if(showFrame)
-                        av_frame_free(&showFrame);
+                    AVFrame *frame = av_frame_alloc();
 
-                    showFrame = av_frame_clone(frame);
+                    if (!frame)
+                    {
+                        av_log(NULL, AV_LOG_ERROR, "Decode thread could not allocate frame\n");
+                        ret = AVERROR(ENOMEM);
+                        break;
+                    }
 
-                    // We need to flip the video image
-                    //  See: https://lists.ffmpeg.org/pipermail/ffmpeg-user/2011-May/000976.html
+                    // Get a frame from the decoder
+                    ret = avcodec_receive_frame(g_stream_ctx[streamIndex].dec_ctx, frame);
+                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+                    {
+                        av_frame_free(&frame);
+                        continue;
+                    }
+                    else if (ret < 0)
+                    {
+                        av_log(NULL, AV_LOG_ERROR, "Error while receiving a frame from the decoder\n");
+                        av_frame_free(&frame);
+                        break;
+                    }
 
-                    showFrame->data[0] += showFrame->linesize[0] * (showFrame->height - 1);
-                    showFrame->linesize[0] = -(showFrame->linesize[0]);
+                    if (ret >= 0)
+                    {
+                        framesDecoded++;
 
-                    showFrame->data[1] += showFrame->linesize[1] * ((showFrame->height/2) - 1);
-                    showFrame->linesize[1] = -(showFrame->linesize[1]);
+                        if(framesDecoded == frameNumberToDisplay)
+                        {
+                            if(showFrame)
+                                av_frame_free(&showFrame);
 
-                    showFrame->data[2] += showFrame->linesize[2] * ((showFrame->height/2) - 1);
-                    showFrame->linesize[2] = -(showFrame->linesize[2]);
+                            showFrame = av_frame_clone(frame);
 
-                    //bNeedFrame = false;
+                            // We need to flip the video image
+                            //  See: https://lists.ffmpeg.org/pipermail/ffmpeg-user/2011-May/000976.html
+
+                            showFrame->data[0] += showFrame->linesize[0] * (showFrame->height - 1);
+                            showFrame->linesize[0] = -(showFrame->linesize[0]);
+
+                            showFrame->data[1] += showFrame->linesize[1] * ((showFrame->height/2) - 1);
+                            showFrame->linesize[1] = -(showFrame->linesize[1]);
+
+                            showFrame->data[2] += showFrame->linesize[2] * ((showFrame->height/2) - 1);
+                            showFrame->linesize[2] = -(showFrame->linesize[2]);
+
+                            bNeedFrame = false;
+                        }
+                    }
                 }
             }
         }
 
         if(showFrame)
-            WriteFrame(g_stream_ctx[video_stream_index].dec_ctx, showFrame, 0, pTexturePresenter);
+            WriteFrame(g_stream_ctx[videoStreamIndex].dec_ctx, showFrame, 0, pTexturePresenter);
 
         ImGui_ImplGlfwGL3_NewFrame();
 
         unsigned int frame = 1;
+
+        int node_clicked = -1;                // Temporary storage of what node we have clicked to process selection at the end of the loop. May be a pointer to your own node type, etc.
 
         if (ImGui::CollapsingHeader("Video"))
         {
@@ -419,10 +433,33 @@ bool RunGUI(MpegTS_XML &mpts)
 
                 if(ImGui::TreeNode((void*) frame, "Frame:%d, Name:%s, Packets:%d, PID:%ld", frame, i->esd.name.c_str(), numPackets, i->esd.pid))
                 {
+                    if (ImGui::SmallButton("View"))
+                    {
+                        if(frame != frameNumberToDisplay)
+                        {
+                            //av_seek_frame(g_ifmt_ctx, videoStreamIndex, 0, 0);
+                            avformat_flush(g_ifmt_ctx);
+                            avformat_seek_file(g_ifmt_ctx, videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
+                            //avformat_seek_file(g_ifmt_ctx, videoStreamIndex, frame, frame, frame, AVSEEK_FLAG_FRAME);
+                            frameNumberToDisplay = frame;
+                            framesDecoded = 0;
+                            bNeedFrame = true;
+                        }
+                    };
+
+                    ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+                    //if (ImGui::IsItemFocused())
+                    //{
+                    //    nodeFlags |= ImGuiTreeNodeFlags_Selected;
+                    //    printf("Video frame:%d selected, Name:%s, Packets:%d, PID:%ld\n", frame, i->esd.name.c_str(), numPackets, i->esd.pid);
+                    //}
+
                     for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
                     {
-                        if (ImGui::TreeNode((void*)(intptr_t)frame, "Byte Location:%d, Num Packets:%d, Packet Size:%d", j->startByteLocation, j->numPackets, j->packetSize))
-                            ImGui::TreePop();
+                        //if (ImGui::TreeNode((void*)(intptr_t)frame, "Byte Location:%d, Num Packets:%d, Packet Size:%d", j->startByteLocation, j->numPackets, j->packetSize))
+                        //    ImGui::TreePop();
+                        ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%d, Num Packets:%d, Packet Size:%d", j->startByteLocation, j->numPackets, j->packetSize);
                     }
 
                     ImGui::TreePop();
