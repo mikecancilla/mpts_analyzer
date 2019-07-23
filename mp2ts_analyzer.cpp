@@ -82,7 +82,6 @@ extern int DoFFMpegOpenGLTest(const std::string &inFileName);
 #define WINDOW_WIDTH 1600
 #define WINDOW_HEIGHT 900
 
-static GLFWwindow* g_window = NULL;
 
 typedef struct StreamContext {
     AVCodecContext *dec_ctx;
@@ -91,12 +90,15 @@ typedef struct StreamContext {
 } StreamContext;
 
 // Describes the input file
-static AVFormatContext     *g_ifmt_ctx = NULL;
-static StreamContext       *g_stream_ctx = NULL;
+static AVFormatContext  *g_ifmt_ctx = NULL;
+static StreamContext    *g_stream_ctx = NULL;
+static AVFrame          *g_pFrame = NULL;
+static GLFWwindow       *g_window = NULL;
+static TexturePresenter *g_pTexturePresenter = NULL;
 
-static char g_error[AV_ERROR_MAX_STRING_SIZE] = {0};
-static double g_total_duration = 0;
-static double g_total_frames = 0;
+static char             g_error[AV_ERROR_MAX_STRING_SIZE] = {0};
+static double           g_total_duration = 0;
+static double           g_total_frames = 0;
 
 static int OpenInputFile(const std::string &inFileName)
 {
@@ -149,8 +151,8 @@ static int OpenInputFile(const std::string &inFileName)
         }
 
         /* Reencode video & audio and remux subtitles etc. */
-        if (codec_ctx->codec_type == AVMEDIA_TYPE_VIDEO
-            || codec_ctx->codec_type == AVMEDIA_TYPE_AUDIO)
+        if (codec_ctx->codec_type == AVMEDIA_TYPE_VIDEO ||
+            codec_ctx->codec_type == AVMEDIA_TYPE_AUDIO)
         {
             if (codec_ctx->codec_type == AVMEDIA_TYPE_VIDEO)
             {
@@ -158,7 +160,8 @@ static int OpenInputFile(const std::string &inFileName)
 
                 //if(g_options.start_time == -1 &&
                 //   g_options.end_time == -1)
-                    g_total_duration = (double) g_ifmt_ctx->duration / AV_TIME_BASE;
+                    g_total_duration = (double) stream->duration / (double) stream->time_base.den; 
+                    //g_total_duration = (double) g_ifmt_ctx->duration / AV_TIME_BASE;
                 //else
                 //{
                 //    double start_time = g_options.start_time == -1 ? 0 : g_options.start_time;
@@ -167,7 +170,7 @@ static int OpenInputFile(const std::string &inFileName)
                 //}
 
                 double fps = (double) stream->avg_frame_rate.num / stream->avg_frame_rate.den;
-                g_total_frames = g_total_duration / (1.0 / fps);
+                g_total_frames = g_total_duration *  fps;
             }
 
 			// Just for debugging, two fields which state frame rate
@@ -189,7 +192,7 @@ static int OpenInputFile(const std::string &inFileName)
     return 0;
 }
 
-static int InitOpenGL()
+static int InitOpenGL(std::string windowTitle)
 {
     /* Initialize the library */
     if(!glfwInit())
@@ -200,7 +203,7 @@ static int InitOpenGL()
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     /* Create a windowed mode window and its OpenGL context */
-    g_window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Mpeg2-TS Parser GUI", NULL, NULL);
+    g_window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, windowTitle.c_str(), NULL, NULL);
     if (!g_window)
     {
         fprintf(stderr, "Could not create GL window! Continuing without a GUI!\n");
@@ -297,8 +300,156 @@ static bool WriteFrame(AVCodecContext *dec_ctx,
 
 #pragma warning(disable:4996)
 
-bool RunGUI(MpegTS_XML &mpts)
+static AVFrame* GetNextVideoFrame()
 {
+    AVPacket packet;
+    AVFrame *pFrame = NULL;
+
+    while(av_read_frame(g_ifmt_ctx, &packet) >= 0)
+    {
+        int streamIndex = packet.stream_index;
+
+        //If the packet is from the video stream
+        if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
+        {
+            // Send a packet to the decoder
+            int ret = avcodec_send_packet(g_stream_ctx[streamIndex].dec_ctx, &packet);
+
+            // Unref the packet
+            av_packet_unref(&packet);
+
+            if (ret < 0)
+            {
+                av_log(NULL, AV_LOG_ERROR, "Error while sending a packet to the decoder\n");
+                break;
+            }
+
+            pFrame = av_frame_alloc();
+
+            if (!pFrame)
+            {
+                av_log(NULL, AV_LOG_ERROR, "Decode thread could not allocate frame\n");
+                ret = AVERROR(ENOMEM);
+                break;
+            }
+
+            // Get a frame from the decoder
+            ret = avcodec_receive_frame(g_stream_ctx[streamIndex].dec_ctx, pFrame);
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            {
+                av_frame_free(&pFrame);
+                continue;
+            }
+            else if (ret < 0)
+            {
+                av_log(NULL, AV_LOG_ERROR, "Error while receiving a frame from the decoder\n");
+                av_frame_free(&pFrame);
+                break;
+            }
+
+            if (ret >= 0)
+                break;
+        }
+    }
+
+    return pFrame;
+}
+
+void FlipAvFrame(AVFrame *pFrame)
+{
+    // We need to flip the video image
+    //  See: https://lists.ffmpeg.org/pipermail/ffmpeg-user/2011-May/000976.html
+    pFrame->data[0] += pFrame->linesize[0] * (pFrame->height - 1);
+    pFrame->linesize[0] = -(pFrame->linesize[0]);
+
+    pFrame->data[1] += pFrame->linesize[1] * ((pFrame->height/2) - 1);
+    pFrame->linesize[1] = -(pFrame->linesize[1]);
+
+    pFrame->data[2] += pFrame->linesize[2] * ((pFrame->height/2) - 1);
+    pFrame->linesize[2] = -(pFrame->linesize[2]);
+}
+
+static void DoSeekTest()
+{
+    int videoStreamIndex = -1;
+    float duration = 0;
+
+    for(unsigned int streamIndex = 0; streamIndex < g_ifmt_ctx->nb_streams; streamIndex++)
+        if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
+        {
+            AVStream *stream = g_ifmt_ctx->streams[streamIndex];
+            duration = (float) stream->duration;
+            videoStreamIndex = streamIndex;
+            break;
+        }
+
+    ImGui_ImplGlfwGL3_NewFrame();
+
+    ImGui::SetNextWindowContentSize(ImVec2(50.f, 2.f));
+    ImGui::Begin("Seek bar"); // Create a window called "Seek bar" and append into it.
+
+    static int seekValueLast = 0;
+    int seekValue = seekValueLast;
+    ImGui::SliderInt("Seek", &seekValue, 1, 100);
+
+    if(seekValueLast != seekValue && seekValue > 0)
+    {
+        seekValueLast = seekValue;
+
+        float percent = (float) seekValue / 100.f;
+        uint64_t seekTS = (uint64_t) (duration * percent);
+
+        avformat_flush(g_ifmt_ctx);
+        avio_flush(g_ifmt_ctx->pb);
+        avformat_seek_file(g_ifmt_ctx, videoStreamIndex, seekTS, seekTS, seekTS, 0);
+
+        if(g_pFrame)
+            av_frame_free(&g_pFrame);
+
+        g_pFrame = GetNextVideoFrame();
+
+        FlipAvFrame(g_pFrame);
+    }
+
+    if(g_pFrame)
+        WriteFrame(g_stream_ctx[videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter);
+
+    ImGui::End();
+}
+
+template <typename T>
+void IncAndClamp(T &value, T &incBy, T min, T max)
+
+{
+    value += incBy;
+
+    if(value < min)
+    {
+        value = min;
+        incBy *= (T) -1;
+    }
+    else if(value > max)
+    {
+        value = max;
+        incBy *= (T) -1;
+    }
+}
+
+static bool RunGUI(MpegTS_XML &mpts)
+{
+    std::string windowTitle = "Mpeg2-Ts Parser GUI: ";
+    windowTitle += mpts.m_mpegTSDescriptor.fileName;
+    if(0 != InitOpenGL(windowTitle))
+        return false;
+
+    g_pTexturePresenter = new TexturePresenter(g_window, "");
+
+    if(NULL == g_pTexturePresenter)
+    {
+        CloseOpenGL();
+        return false;
+    }
+
     av_register_all();
 
     avfilter_register_all();
@@ -308,116 +459,127 @@ bool RunGUI(MpegTS_XML &mpts)
     if(0 != OpenInputFile(mpts.m_mpegTSDescriptor.fileName))
         return false;
 
-    if(0 != InitOpenGL())
-        return false;
-
     unsigned int err = GLFW_NO_ERROR;
 
-	ImGui::CreateContext();
+    ImGui::CreateContext();
 	ImGui_ImplGlfwGL3_Init(g_window, true);
 	ImGui::StyleColorsDark();
-
-    TexturePresenter *pTexturePresenter = new TexturePresenter(g_window, "");
-
-    AVPacket packet;
 
     int ret = 0;
     int frame_num = 0;
     bool bNeedFrame = true;
 
-    AVFrame *showFrame = NULL;
-    int videoStreamIndex = 0;
     int frameNumberToDisplay = 1;
     int framesDecoded = 0;
 
     Renderer renderer;
+
+    float red = 114.f;
+    float redInc = -3.f;
+    float green = 144.f;
+    float greenInc = 5.f;
+    float blue = 154.f;
+    float blueInc = 7.f;
 
     while(!glfwWindowShouldClose(g_window))
     {
 		glClearColor(0.f, 0.f, 0.f, 1.f);
         renderer.Clear();
 
-        // If still frames to read
-        if(bNeedFrame)
+#define RUN_TEST 0
+#if RUN_TEST
+        DoSeekTest();
+#else
+        int videoStreamIndex = -1;
+        float duration = 0;
+        float totalFrames = 0;
+
+        for(unsigned int streamIndex = 0; streamIndex < g_ifmt_ctx->nb_streams; streamIndex++)
         {
-            if(av_read_frame(g_ifmt_ctx, &packet) >= 0)
+            if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
             {
-                int streamIndex = packet.stream_index;
+                AVStream *stream = g_ifmt_ctx->streams[streamIndex];
 
-                //If the packet is from the video stream
-                if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-                {
-                    videoStreamIndex = streamIndex;
+                duration = (float) stream->duration;
+                float durationInSeconds = duration / stream->time_base.den;
+                float frameRate = (float) stream->avg_frame_rate.num / (float) stream->avg_frame_rate.den;
+                totalFrames = durationInSeconds * frameRate;
 
-                    // Send a packet to the decoder
-                    ret = avcodec_send_packet(g_stream_ctx[streamIndex].dec_ctx, &packet);
-
-                    // Unref the packet
-                    av_packet_unref(&packet);
-
-                    if (ret < 0)
-                    {
-                        av_log(NULL, AV_LOG_ERROR, "Error while sending a packet to the decoder\n");
-                        break;
-                    }
-
-                    AVFrame *frame = av_frame_alloc();
-
-                    if (!frame)
-                    {
-                        av_log(NULL, AV_LOG_ERROR, "Decode thread could not allocate frame\n");
-                        ret = AVERROR(ENOMEM);
-                        break;
-                    }
-
-                    // Get a frame from the decoder
-                    ret = avcodec_receive_frame(g_stream_ctx[streamIndex].dec_ctx, frame);
-                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-                    {
-                        av_frame_free(&frame);
-                        continue;
-                    }
-                    else if (ret < 0)
-                    {
-                        av_log(NULL, AV_LOG_ERROR, "Error while receiving a frame from the decoder\n");
-                        av_frame_free(&frame);
-                        break;
-                    }
-
-                    if (ret >= 0)
-                    {
-                        framesDecoded++;
-
-                        if(framesDecoded == frameNumberToDisplay)
-                        {
-                            if(showFrame)
-                                av_frame_free(&showFrame);
-
-                            showFrame = av_frame_clone(frame);
-
-                            // We need to flip the video image
-                            //  See: https://lists.ffmpeg.org/pipermail/ffmpeg-user/2011-May/000976.html
-
-                            showFrame->data[0] += showFrame->linesize[0] * (showFrame->height - 1);
-                            showFrame->linesize[0] = -(showFrame->linesize[0]);
-
-                            showFrame->data[1] += showFrame->linesize[1] * ((showFrame->height/2) - 1);
-                            showFrame->linesize[1] = -(showFrame->linesize[1]);
-
-                            showFrame->data[2] += showFrame->linesize[2] * ((showFrame->height/2) - 1);
-                            showFrame->linesize[2] = -(showFrame->linesize[2]);
-
-                            bNeedFrame = false;
-                        }
-                    }
-                }
+                videoStreamIndex = streamIndex;
+                break;
             }
         }
 
-        if(showFrame)
-            WriteFrame(g_stream_ctx[videoStreamIndex].dec_ctx, showFrame, 0, pTexturePresenter);
-
         ImGui_ImplGlfwGL3_NewFrame();
+
+        ImGui::Begin("Seek");
+
+        static int seekValueLast = 0;
+        int seekValue = seekValueLast;
+        ImGui::SliderInt("Seek", &seekValue, 1, 100);
+
+        ImGui::SameLine();
+
+        ImVec4 color = ImVec4(red/255.0f, green/255.0f, blue/255.0f, 1.f);
+        ImGui::ColorButton("ColorButton", *(ImVec4*)&color, 0x00020000, ImVec2(20,20));
+
+        ImGui::Text("Seek Frame: %d, Decoded frame: %d", (int) (totalFrames * ((float) seekValue / 100.f)), framesDecoded);
+
+        ImGui::End(); // Seek
+
+        if(seekValueLast != seekValue && seekValue > 0)
+        {
+            seekValueLast = seekValue;
+
+            float percent = (float) seekValue / 100.f;
+            uint64_t seekTS = (uint64_t) (duration * percent);
+
+            avformat_flush(g_ifmt_ctx);
+            avio_flush(g_ifmt_ctx->pb);
+            avformat_seek_file(g_ifmt_ctx, videoStreamIndex, seekTS, seekTS, seekTS, 0);
+
+            if(g_pFrame)
+                av_frame_free(&g_pFrame);
+
+            g_pFrame = GetNextVideoFrame();
+
+            FlipAvFrame(g_pFrame);
+        }
+        else
+        {
+            // If still frames to read
+            if(bNeedFrame)
+            {
+                AVFrame *nextFrame = GetNextVideoFrame();
+
+                if (nextFrame)
+                {
+                    framesDecoded++;
+
+                    IncAndClamp(red, redInc, 0.f, 255.f);
+                    IncAndClamp(green, greenInc, 0.f, 255.f);
+                    IncAndClamp(blue, blueInc, 0.f, 255.f);
+
+                    if(framesDecoded == frameNumberToDisplay)
+                    {
+                        if(g_pFrame)
+                            av_frame_free(&g_pFrame);
+
+                        g_pFrame = av_frame_clone(nextFrame);
+
+                        FlipAvFrame(g_pFrame);
+                        bNeedFrame = false;
+                    }
+                }
+
+                av_frame_free(&nextFrame);
+            }
+        }
+
+        if(g_pFrame)
+            WriteFrame(g_stream_ctx[videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter);
+
+        ImGui::Begin("Frames");
 
         unsigned int frame = 1;
 
@@ -439,6 +601,7 @@ bool RunGUI(MpegTS_XML &mpts)
                         {
                             //av_seek_frame(g_ifmt_ctx, videoStreamIndex, 0, 0);
                             avformat_flush(g_ifmt_ctx);
+                            avio_flush(g_ifmt_ctx->pb);
                             avformat_seek_file(g_ifmt_ctx, videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
                             //avformat_seek_file(g_ifmt_ctx, videoStreamIndex, frame, frame, frame, AVSEEK_FLAG_FRAME);
                             frameNumberToDisplay = frame;
@@ -449,16 +612,8 @@ bool RunGUI(MpegTS_XML &mpts)
 
                     ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
-                    //if (ImGui::IsItemFocused())
-                    //{
-                    //    nodeFlags |= ImGuiTreeNodeFlags_Selected;
-                    //    printf("Video frame:%d selected, Name:%s, Packets:%d, PID:%ld\n", frame, i->esd.name.c_str(), numPackets, i->esd.pid);
-                    //}
-
                     for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
                     {
-                        //if (ImGui::TreeNode((void*)(intptr_t)frame, "Byte Location:%d, Num Packets:%d, Packet Size:%d", j->startByteLocation, j->numPackets, j->packetSize))
-                        //    ImGui::TreePop();
                         ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%d, Num Packets:%d, Packet Size:%d", j->startByteLocation, j->numPackets, j->packetSize);
                     }
 
@@ -493,6 +648,9 @@ bool RunGUI(MpegTS_XML &mpts)
             }
         }
 
+        ImGui::End(); // Frames
+#endif
+
 		ImGui::Render();
 		ImGui_ImplGlfwGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -503,7 +661,11 @@ bool RunGUI(MpegTS_XML &mpts)
         glfwPollEvents();
     }
 
-    av_frame_free(&showFrame);
+    if(g_pFrame)
+        av_frame_free(&g_pFrame);
+
+    if(g_pTexturePresenter)
+        delete g_pTexturePresenter;
 
   	ImGui_ImplGlfwGL3_Shutdown();
 	ImGui::DestroyContext();
@@ -525,29 +687,13 @@ int main(int argc, char* argv[])
         return 0;
     }
 */
+
     if (0 == argc)
     {
         fprintf(stderr, "Usage: %s input.xml\n", argv[0]);
         fprintf(stderr, "  The file input.xml is generated by mp2ts_parser\n");
         return 0;
     }
-
-/*
-    for (int i = 0; i < argc - 1; i++)
-    {
-        if (0 == strcmp("-d", argv[i]))
-            g_b_debug = true;
-
-        if (0 == strcmp("-g", argv[i]))
-            g_b_gui = true;
-
-        if (0 == strcmp("-p", argv[i]))
-            g_b_progress = true;
-
-        if(0 == strcmp("-x", argv[i]))
-            g_b_xml = true;
-    }
-*/
 
     printf("%s: Opening and analyzing %s, this can take a while...\n", argv[0], argv[1]);
 
