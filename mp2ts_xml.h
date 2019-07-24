@@ -32,7 +32,6 @@ Value  StreamType                             Value  StreamType
 0x11 = MPEG-4 LATM AAC Audio                  0xea = Private ES(VC-1)
 */
 
-//typedef enum streamTypes
 enum eStreamType
 {
     eReserved                                   = 0x0, 
@@ -71,7 +70,6 @@ enum eStreamType
     eSDDS_Audio2                                = 0x94,
     eMSCODEC_Video                              = 0xa0,
     ePrivate_ES_VC1                             = 0xea
-//} eStreamType;
 };
 
 struct AccessUnitElement
