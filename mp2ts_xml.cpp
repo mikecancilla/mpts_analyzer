@@ -75,9 +75,74 @@ bool MpegTS_XML::ParseMpegTSDescriptor(tinyxml2::XMLElement* root)
     element = root->FirstChildElement("packet_size");
     m_mpegTSDescriptor.packetSize = std::atoi(element->GetText());
 
+    element = root->FirstChildElement("terse");
+    m_mpegTSDescriptor.terse = std::atoi(element->GetText()) == 1 ? true : false;
+
     if("" == m_mpegTSDescriptor.fileName ||
         0 == m_mpegTSDescriptor.packetSize)
         return false;
+
+    return true;
+}
+
+bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
+{
+    if(NULL == root)
+        return false;
+
+    tinyxml2::XMLElement* element = nullptr;
+
+    element = root->FirstChildElement("frame");
+
+    while(element)
+    {
+        const char *pid = element->Attribute("pid");
+        long thisPID = strtol(pid, NULL, 16);
+
+        AccessUnit *pAU = nullptr;
+
+        if(m_currentVideoAU.esd.pid == thisPID)
+            pAU = &m_currentVideoAU;
+        else if(m_currentAudioAU.esd.pid == thisPID)
+            pAU = &m_currentAudioAU;
+
+        if(pAU)
+        {
+            tinyxml2::XMLElement* slice = element->FirstChildElement("slice");
+
+            while(slice)
+            {
+                AccessUnitElement aue;
+                aue.startByteLocation = slice->IntAttribute("byte");
+                aue.numPackets = slice->IntAttribute("packets");
+
+                pAU->accessUnitElements.push_back(aue);
+
+                slice = slice->NextSiblingElement("slice");
+            }
+
+            if(pAU == &m_currentVideoAU)
+                m_videoAccessUnits.push_back(m_currentVideoAU);
+            else if(pAU == &m_currentAudioAU)
+                m_audioAccessUnits.push_back(m_currentAudioAU);
+
+            pAU->accessUnitElements.clear();
+        }
+
+        element = element->NextSiblingElement("frame");
+    }
+
+    if(m_currentVideoAU.accessUnitElements.size())
+    {
+        m_videoAccessUnits.push_back(m_currentVideoAU);
+        m_currentVideoAU.accessUnitElements.clear();
+    }
+        
+    if(m_currentAudioAU.accessUnitElements.size())
+    {
+        m_audioAccessUnits.push_back(m_currentAudioAU);
+        m_currentAudioAU.accessUnitElements.clear();
+    }
 
     return true;
 }
@@ -135,7 +200,6 @@ bool MpegTS_XML::ParsePacketList(tinyxml2::XMLElement* root)
                 AccessUnitElement aue;
                 aue.startByteLocation = attribute->IntValue();
                 aue.numPackets = 1;
-                aue.packetSize = m_mpegTSDescriptor.packetSize;
 
                 pAU->accessUnitElements.push_back(aue);
             }

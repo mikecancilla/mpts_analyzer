@@ -76,19 +76,16 @@ struct AccessUnitElement
 {
     size_t startByteLocation;
     size_t numPackets;
-    uint8_t packetSize;
 
     AccessUnitElement()
         : startByteLocation(-1)
         , numPackets(-1)
-        , packetSize(0)
     {
     }
 
-    AccessUnitElement(size_t startByteLocation, size_t numPackets, uint8_t packetSize)
+    AccessUnitElement(size_t startByteLocation, size_t numPackets)
         : startByteLocation(startByteLocation)
         , numPackets(numPackets)
-        , packetSize(packetSize)
     {
     }
 };
@@ -134,10 +131,12 @@ struct MpegTSDescriptor
 {
     std::string fileName;
     uint8_t packetSize;
+    bool terse;
 
     MpegTSDescriptor()
         : fileName("")
         , packetSize(0)
+        , terse(true)
     {}
 };
 
@@ -154,6 +153,7 @@ public:
     bool ParsePMT(tinyxml2::XMLElement* root);
     bool ParseMpegTSDescriptor(tinyxml2::XMLElement* root);
     bool ParsePacketList(tinyxml2::XMLElement* root);
+    bool ParsePacketListTerse(tinyxml2::XMLElement* root);
 
 public:
     MpegTSDescriptor            m_mpegTSDescriptor;
