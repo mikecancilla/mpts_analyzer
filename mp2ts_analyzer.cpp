@@ -105,6 +105,8 @@ static int OpenInputFile(MpegTS_XML &mpts)
     g_ifmt_ctx = NULL;
     std::string inFileName = mpts.m_mpegTSDescriptor.fileName;
 
+    av_log_set_level(AV_LOG_QUIET);
+
     if ((ret = avformat_open_input(&g_ifmt_ctx, inFileName.c_str(), NULL, NULL)) < 0)
     {
         av_log(NULL, AV_LOG_ERROR, "Cannot open input file: %s\n", av_make_error_string(g_error, AV_ERROR_MAX_STRING_SIZE, ret));
@@ -297,8 +299,6 @@ static bool WriteFrame(AVCodecContext *dec_ctx,
     return true;
 }
 
-#pragma warning(disable:4996)
-
 static AVFrame* GetNextVideoFrame()
 {
     AVPacket packet;
@@ -462,12 +462,6 @@ static bool RunGUI(MpegTS_XML &mpts)
         CloseOpenGL();
         return false;
     }
-
-    av_register_all();
-
-    avfilter_register_all();
-
-    av_log_set_level(AV_LOG_QUIET);
 
     unsigned int err = GLFW_NO_ERROR;
 
@@ -770,7 +764,7 @@ int main(int argc, char* argv[])
     // Show as GUI
     if(RunGUI(mpts))
     {
-        for(int i = 0; i < g_ifmt_ctx->nb_streams; i++)
+        for(unsigned int i = 0; i < g_ifmt_ctx->nb_streams; i++)
         {
             if(&(g_stream_ctx[i]))
                 avcodec_free_context(&g_stream_ctx[i].dec_ctx);
