@@ -74,8 +74,8 @@ enum eStreamType
 
 struct AccessUnitElement
 {
-    size_t startByteLocation;
-    size_t numPackets;
+    int64_t startByteLocation;
+    int64_t numPackets;
 
     AccessUnitElement()
         : startByteLocation(-1)
@@ -83,7 +83,7 @@ struct AccessUnitElement
     {
     }
 
-    AccessUnitElement(size_t startByteLocation, size_t numPackets)
+    AccessUnitElement(int64_t startByteLocation, int64_t numPackets)
         : startByteLocation(startByteLocation)
         , numPackets(numPackets)
     {
@@ -118,23 +118,29 @@ struct AccessUnit
     std::vector<AccessUnitElement> accessUnitElements;
     
     AccessUnit()
+        : frameNumber(0)
     {
     }
 
-    AccessUnit(std::string name, eStreamType type, long int pid)
+    AccessUnit(std::string name, eStreamType type, long pid)
         : esd(name, type, pid)
+        , frameNumber(0)
     {
     }
+
+    unsigned int frameNumber;
 };
 
 struct MpegTSDescriptor
 {
     std::string fileName;
+    int64_t fileSize;
     uint8_t packetSize;
     bool terse;
 
     MpegTSDescriptor()
         : fileName("")
+        , fileSize(0)
         , packetSize(0)
         , terse(true)
     {}

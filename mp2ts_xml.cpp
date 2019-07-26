@@ -72,6 +72,9 @@ bool MpegTS_XML::ParseMpegTSDescriptor(tinyxml2::XMLElement* root)
     tinyxml2::XMLElement* element = root->FirstChildElement("name");
     m_mpegTSDescriptor.fileName = element->GetText();
 
+    element = root->FirstChildElement("file_size");
+    m_mpegTSDescriptor.fileSize = std::atoi(element->GetText());
+
     element = root->FirstChildElement("packet_size");
     m_mpegTSDescriptor.packetSize = std::atoi(element->GetText());
 
@@ -94,6 +97,9 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
 
     element = root->FirstChildElement("frame");
 
+    unsigned int videoFrameNumber = 1;
+    unsigned int audioFrameNumber = 1;
+
     while(element)
     {
         const char *pid = element->Attribute("pid");
@@ -113,8 +119,8 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
             while(slice)
             {
                 AccessUnitElement aue;
-                aue.startByteLocation = slice->IntAttribute("byte");
-                aue.numPackets = slice->IntAttribute("packets");
+                aue.startByteLocation = slice->Int64Attribute("byte");
+                aue.numPackets = slice->Int64Attribute("packets");
 
                 pAU->accessUnitElements.push_back(aue);
 
@@ -122,9 +128,15 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
             }
 
             if(pAU == &m_currentVideoAU)
+            {
+                m_currentVideoAU.frameNumber = videoFrameNumber++;
                 m_videoAccessUnits.push_back(m_currentVideoAU);
+            }
             else if(pAU == &m_currentAudioAU)
+            {
+                m_currentVideoAU.frameNumber = audioFrameNumber++;
                 m_audioAccessUnits.push_back(m_currentAudioAU);
+            }
 
             pAU->accessUnitElements.clear();
         }
@@ -158,6 +170,9 @@ bool MpegTS_XML::ParsePacketList(tinyxml2::XMLElement* root)
 
     long lastPID = -1;
 
+    unsigned int videoFrameNumber = 1;
+    unsigned int audioFrameNumber = 1;
+
     while(element)
     {
         tinyxml2::XMLElement* pid = element->FirstChildElement("pid");
@@ -181,9 +196,15 @@ bool MpegTS_XML::ParsePacketList(tinyxml2::XMLElement* root)
                 if(pAU->accessUnitElements.size())
                 {
                     if(pAU == &m_currentVideoAU)
+                    {
+                        m_currentVideoAU.frameNumber = videoFrameNumber++;
                         m_videoAccessUnits.push_back(m_currentVideoAU);
+                    }
                     else if(pAU == &m_currentAudioAU)
+                    {
+                        m_currentVideoAU.frameNumber = audioFrameNumber++;
                         m_audioAccessUnits.push_back(m_currentAudioAU);
+                    }
                 }
 
                 pAU->accessUnitElements.clear();

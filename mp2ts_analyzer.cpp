@@ -82,6 +82,7 @@ extern int DoFFMpegOpenGLTest(const std::string &inFileName);
 #define WINDOW_WIDTH 1600
 #define WINDOW_HEIGHT 900
 
+#define MIN(x,y) ((x) < (y) ? (x) : (y))
 
 typedef struct StreamContext {
     AVCodecContext *dec_ctx;
@@ -435,6 +436,20 @@ void IncAndClamp(T &value, T &incBy, T min, T max)
     }
 }
 
+int FrameNumberFromBytePos(int64_t bytePos, std::vector<AccessUnit> &accessUnitList)
+{
+    if(0 == bytePos)
+        return 1;
+
+    for(std::vector<AccessUnit>::iterator i = accessUnitList.begin(); i < accessUnitList.end(); i++)
+    {
+        if(i->accessUnitElements[0].startByteLocation > bytePos)
+            return i->frameNumber;
+    }
+
+    return -1;
+}
+
 static bool RunGUI(MpegTS_XML &mpts)
 {
     std::string windowTitle = "Mpeg2-Ts Parser GUI: ";
@@ -469,7 +484,8 @@ static bool RunGUI(MpegTS_XML &mpts)
     int frame_num = 0;
     bool bNeedFrame = true;
 
-    int frameNumberToDisplay = 1;
+    int frameDisplaying = 1;
+    int framesToDecode = 1;
     int framesDecoded = 0;
 
     Renderer renderer;
@@ -523,7 +539,10 @@ static bool RunGUI(MpegTS_XML &mpts)
         ImVec4 color = ImVec4(red/255.0f, green/255.0f, blue/255.0f, 1.f);
         ImGui::ColorButton("ColorButton", *(ImVec4*)&color, 0x00020000, ImVec2(20,20));
 
-        ImGui::Text("Seek Frame: %d, Decoded frame: %d", (int) (totalFrames * ((float) seekValue / 100.f)), framesDecoded);
+        float fileBytePos = (float) mpts.m_mpegTSDescriptor.fileSize * ((float) seekValue / 100.f);
+        int seekFrameNumber =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnits);
+
+        ImGui::Text("Frame:%d, Seek Byte: %llu", seekFrameNumber, (int64_t) fileBytePos);
 
         ImGui::End(); // Seek
 
@@ -531,19 +550,31 @@ static bool RunGUI(MpegTS_XML &mpts)
         {
             seekValueLast = seekValue;
 
-            float percent = (float) seekValue / 100.f;
-            uint64_t seekTS = (uint64_t) (duration * percent);
+            uint64_t seekBytes = (uint64_t) fileBytePos;
 
             avformat_flush(g_ifmt_ctx);
             avio_flush(g_ifmt_ctx->pb);
-            avformat_seek_file(g_ifmt_ctx, videoStreamIndex, seekTS, seekTS, seekTS, 0);
+            avformat_seek_file(g_ifmt_ctx, videoStreamIndex, seekBytes, seekBytes, seekBytes, AVSEEK_FLAG_BYTE);
 
-            if(g_pFrame)
-                av_frame_free(&g_pFrame);
+            AVFrame *pNextFrame = GetNextVideoFrame();
 
-            g_pFrame = GetNextVideoFrame();
+            while(pNextFrame && AV_PICTURE_TYPE_I != pNextFrame->pict_type)
+                pNextFrame = GetNextVideoFrame();
 
-            FlipAvFrame(g_pFrame);
+            if(pNextFrame)
+            {
+                if(g_pFrame)
+                    av_frame_free(&g_pFrame);
+
+                g_pFrame = av_frame_clone(pNextFrame);
+
+                frameDisplaying = seekFrameNumber;
+
+                if(AV_PICTURE_TYPE_I == g_pFrame->pict_type)
+                    FlipAvFrame(g_pFrame);
+
+                av_frame_free(&pNextFrame);
+            }
         }
         else
         {
@@ -560,14 +591,17 @@ static bool RunGUI(MpegTS_XML &mpts)
                     IncAndClamp(green, greenInc, 0.f, 255.f);
                     IncAndClamp(blue, blueInc, 0.f, 255.f);
 
-                    if(framesDecoded == frameNumberToDisplay)
+                    FlipAvFrame(nextFrame);
+                    WriteFrame(g_stream_ctx[videoStreamIndex].dec_ctx, nextFrame, 0, g_pTexturePresenter);
+
+                    if(framesDecoded == framesToDecode)
                     {
                         if(g_pFrame)
                             av_frame_free(&g_pFrame);
 
                         g_pFrame = av_frame_clone(nextFrame);
 
-                        FlipAvFrame(g_pFrame);
+                        //FlipAvFrame(g_pFrame);
                         bNeedFrame = false;
                     }
                 }
@@ -576,45 +610,76 @@ static bool RunGUI(MpegTS_XML &mpts)
             }
         }
 
-        if(g_pFrame)
+        if(!bNeedFrame && g_pFrame)
             WriteFrame(g_stream_ctx[videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter);
 
         ImGui::Begin("Frames");
 
-        unsigned int frame = 1;
+        unsigned int frame = seekFrameNumber;
 
         int node_clicked = -1;                // Temporary storage of what node we have clicked to process selection at the end of the loop. May be a pointer to your own node type, etc.
 
+        int high = seekFrameNumber + 30;
+        high = MIN(high, mpts.m_videoAccessUnits.size());
+
         if (ImGui::CollapsingHeader("Video"))
         {
-            for(std::vector<AccessUnit>::iterator i = mpts.m_videoAccessUnits.begin(); i < mpts.m_videoAccessUnits.end(); i++)
+            //for(std::vector<AccessUnit>::iterator i = mpts.m_videoAccessUnits.begin(); i < mpts.m_videoAccessUnits.end(); i++)
+            for(int i = seekFrameNumber; i < high; i++)
             {
+                AccessUnit &au = mpts.m_videoAccessUnits[i-1];
+
                 size_t numPackets = 0;
-                for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
+                //for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
+                for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
                     numPackets += j->numPackets;
 
-                if(ImGui::TreeNode((void*) frame, "Frame:%d, Name:%s, Packets:%d, PID:%ld", frame, i->esd.name.c_str(), numPackets, i->esd.pid))
+                if(ImGui::TreeNode((void*) au.frameNumber, "Frame:%d, Name:%s, Packets:%d, PID:%ld", au.frameNumber, au.esd.name.c_str(), numPackets, au.esd.pid))
                 {
                     if (ImGui::SmallButton("View"))
                     {
-                        if(frame != frameNumberToDisplay)
+                        if(frame != frameDisplaying)
                         {
-                            //av_seek_frame(g_ifmt_ctx, videoStreamIndex, 0, 0);
-                            avformat_flush(g_ifmt_ctx);
-                            avio_flush(g_ifmt_ctx->pb);
-                            avformat_seek_file(g_ifmt_ctx, videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
+                            //avformat_flush(g_ifmt_ctx);
+                            //avio_flush(g_ifmt_ctx->pb);
+                            //avformat_seek_file(g_ifmt_ctx, videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
                             //avformat_seek_file(g_ifmt_ctx, videoStreamIndex, frame, frame, frame, AVSEEK_FLAG_FRAME);
-                            frameNumberToDisplay = frame;
+
+                            if(frame < frameDisplaying)
+                            {
+                                uint64_t seekBytes = (uint64_t) fileBytePos;
+
+                                avformat_flush(g_ifmt_ctx);
+                                avio_flush(g_ifmt_ctx->pb);
+                                avformat_seek_file(g_ifmt_ctx, videoStreamIndex, seekBytes, seekBytes, seekBytes, AVSEEK_FLAG_BYTE);
+
+                                AVFrame *pNextFrame = GetNextVideoFrame();
+
+                                while(pNextFrame && AV_PICTURE_TYPE_I != pNextFrame->pict_type)
+                                    pNextFrame = GetNextVideoFrame();
+
+                                av_frame_free(&pNextFrame);
+
+                                if(frame == seekFrameNumber)
+                                    framesToDecode = 1;
+                                else
+                                    framesToDecode = frame - seekFrameNumber;
+                            }
+                            else
+                                framesToDecode = frame - frameDisplaying;
+
                             framesDecoded = 0;
+                            frameDisplaying = frame;
                             bNeedFrame = true;
                         }
                     };
 
                     ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
-                    for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
+                    //for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
+                    for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
                     {
-                        ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%d, Num Packets:%d, Packet Size:%d", j->startByteLocation, j->numPackets, j->packetSize);
+                        ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%d, Num Packets:%d", j->startByteLocation, j->numPackets);
                     }
 
                     ImGui::TreePop();
@@ -624,6 +689,7 @@ static bool RunGUI(MpegTS_XML &mpts)
             }
         }
 
+/*
         frame = 1;
         if (ImGui::CollapsingHeader("Audio"))
         {
@@ -637,7 +703,7 @@ static bool RunGUI(MpegTS_XML &mpts)
                 {
                     for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
                     {
-                        if (ImGui::TreeNode((void*)(intptr_t)frame, "Byte Location:%d, Num Packets:%d, Packet Size:%d", j->startByteLocation, j->numPackets, j->packetSize))
+                        if (ImGui::TreeNode((void*)(intptr_t)frame, "Byte Location:%d, Num Packets:%d", j->startByteLocation, j->numPackets))
                             ImGui::TreePop();
                     }
 
@@ -647,6 +713,7 @@ static bool RunGUI(MpegTS_XML &mpts)
                 frame++;
             }
         }
+*/
 
         ImGui::End(); // Frames
 #endif
@@ -716,7 +783,10 @@ int main(int argc, char* argv[])
     mpts.ParseMpegTSDescriptor(root);
 
     // Build current access units
-    mpts.ParsePacketList(root);
+    if(mpts.m_mpegTSDescriptor.terse)
+        mpts.ParsePacketListTerse(root);
+    else
+        mpts.ParsePacketList(root);
 
     // Show as GUI
     if(RunGUI(mpts))
