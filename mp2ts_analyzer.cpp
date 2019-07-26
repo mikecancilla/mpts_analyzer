@@ -98,14 +98,12 @@ static GLFWwindow       *g_window = NULL;
 static TexturePresenter *g_pTexturePresenter = NULL;
 
 static char             g_error[AV_ERROR_MAX_STRING_SIZE] = {0};
-static double           g_total_duration = 0;
-static double           g_total_frames = 0;
 
-static int OpenInputFile(const std::string &inFileName)
+static int OpenInputFile(MpegTS_XML &mpts)
 {
     int ret;
-    unsigned int i;
     g_ifmt_ctx = NULL;
+    std::string inFileName = mpts.m_mpegTSDescriptor.fileName;
 
     if ((ret = avformat_open_input(&g_ifmt_ctx, inFileName.c_str(), NULL, NULL)) < 0)
     {
@@ -123,71 +121,71 @@ static int OpenInputFile(const std::string &inFileName)
     if (!g_stream_ctx)
         return AVERROR(ENOMEM);
 
-    for (i = 0; i < g_ifmt_ctx->nb_streams; i++)
+    bool bWantVideoIndex = true;
+    bool bWantAudioIndex = true;
+
+    for(unsigned int streamIndex = 0; streamIndex < g_ifmt_ctx->nb_streams; streamIndex++)
     {
-        AVStream *stream = g_ifmt_ctx->streams[i];
-        
-        if(stream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO)
-            continue;
-
-        AVCodec *dec = avcodec_find_decoder(stream->codecpar->codec_id);
-        AVCodecContext *codec_ctx = NULL;
-
-        if (!dec)
-            continue;
-
-        codec_ctx = avcodec_alloc_context3(dec);
-        if (!codec_ctx)
+        if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
         {
-            av_log(NULL, AV_LOG_ERROR, "Failed to allocate the decoder context for stream #%u\n", i);
-            return AVERROR(ENOMEM);
-        }
-
-        ret = avcodec_parameters_to_context(codec_ctx, stream->codecpar);
-        if (ret < 0)
-        {
-            av_log(NULL, AV_LOG_ERROR, "Failed to copy decoder parameters to input decoder context "
-                "for stream #%u\n", i);
-            return ret;
-        }
-
-        /* Reencode video & audio and remux subtitles etc. */
-        if (codec_ctx->codec_type == AVMEDIA_TYPE_VIDEO ||
-            codec_ctx->codec_type == AVMEDIA_TYPE_AUDIO)
-        {
-            if (codec_ctx->codec_type == AVMEDIA_TYPE_VIDEO)
+            if(bWantVideoIndex)
             {
-                codec_ctx->framerate = av_guess_frame_rate(g_ifmt_ctx, stream, NULL);
-
-                //if(g_options.start_time == -1 &&
-                //   g_options.end_time == -1)
-                    g_total_duration = (double) stream->duration / (double) stream->time_base.den; 
-                    //g_total_duration = (double) g_ifmt_ctx->duration / AV_TIME_BASE;
-                //else
-                //{
-                //    double start_time = g_options.start_time == -1 ? 0 : g_options.start_time;
-                //    double end_time = g_options.end_time == -1 ? ((double) g_ifmt_ctx->duration / AV_TIME_BASE) : g_options.end_time;
-                //    g_total_duration = end_time - start_time;
-                //}
-
-                double fps = (double) stream->avg_frame_rate.num / stream->avg_frame_rate.den;
-                g_total_frames = g_total_duration *  fps;
-            }
-
-			// Just for debugging, two fields which state frame rate
-            //double frame_rate = stream->r_frame_rate.num / (double)stream->r_frame_rate.den;
-            //frame_rate = stream->avg_frame_rate.num / (double)stream->avg_frame_rate.den;
-
-            /* Open decoder */
-            ret = avcodec_open2(codec_ctx, dec, NULL);
-            if (ret < 0) {
-                av_log(NULL, AV_LOG_ERROR, "Failed to open decoder for stream #%u\n", i);
-                return ret;
+                mpts.m_videoStreamIndex = streamIndex;
+                bWantVideoIndex = false;
+                break;
             }
         }
 
-        g_stream_ctx[i].dec_ctx = codec_ctx;
+        if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
+        {
+            if(bWantAudioIndex)
+            {
+                mpts.m_audioStreamIndex = streamIndex;
+                bWantAudioIndex = false;
+                break;
+            }
+        }
     }
+
+    if(-1 == mpts.m_videoStreamIndex)
+    {
+        fprintf(stderr, "ERROR: No video stream found in source file!!\n");
+        return AVERROR_STREAM_NOT_FOUND;
+    }
+        
+    AVStream *stream = g_ifmt_ctx->streams[mpts.m_videoStreamIndex];
+        
+    AVCodec *dec = avcodec_find_decoder(stream->codecpar->codec_id);
+    AVCodecContext *codec_ctx = NULL;
+
+    if (!dec)
+        return AVERROR_DECODER_NOT_FOUND;
+
+    codec_ctx = avcodec_alloc_context3(dec);
+    if (!codec_ctx)
+    {
+        av_log(NULL, AV_LOG_ERROR, "Failed to allocate the decoder context for stream #%u\n", mpts.m_videoStreamIndex);
+        return AVERROR(ENOMEM);
+    }
+
+    ret = avcodec_parameters_to_context(codec_ctx, stream->codecpar);
+    if (ret < 0)
+    {
+        av_log(NULL, AV_LOG_ERROR, "Failed to copy decoder parameters to input decoder context "
+            "for stream #%u\n", mpts.m_videoStreamIndex);
+        return ret;
+    }
+
+    codec_ctx->framerate = av_guess_frame_rate(g_ifmt_ctx, stream, NULL);
+
+    // Open decoder
+    ret = avcodec_open2(codec_ctx, dec, NULL);
+    if (ret < 0) {
+        av_log(NULL, AV_LOG_ERROR, "Failed to open decoder for stream #%u\n", mpts.m_videoStreamIndex);
+        return ret;
+    }
+
+    g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx = codec_ctx;
 
     av_dump_format(g_ifmt_ctx, 0, inFileName.c_str(), 0);
     return 0;
@@ -471,9 +469,6 @@ static bool RunGUI(MpegTS_XML &mpts)
 
     av_log_set_level(AV_LOG_QUIET);
 
-    if(0 != OpenInputFile(mpts.m_mpegTSDescriptor.fileName))
-        return false;
-
     unsigned int err = GLFW_NO_ERROR;
 
     ImGui::CreateContext();
@@ -488,14 +483,14 @@ static bool RunGUI(MpegTS_XML &mpts)
     int framesToDecode = 1;
     int framesDecoded = 0;
 
-    Renderer renderer;
-
     float red = 114.f;
     float redInc = -3.f;
     float green = 144.f;
     float greenInc = 5.f;
     float blue = 154.f;
     float blueInc = 7.f;
+
+    Renderer renderer;
 
     while(!glfwWindowShouldClose(g_window))
     {
@@ -506,25 +501,6 @@ static bool RunGUI(MpegTS_XML &mpts)
 #if RUN_TEST
         DoSeekTest();
 #else
-        int videoStreamIndex = -1;
-        float duration = 0;
-        float totalFrames = 0;
-
-        for(unsigned int streamIndex = 0; streamIndex < g_ifmt_ctx->nb_streams; streamIndex++)
-        {
-            if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-            {
-                AVStream *stream = g_ifmt_ctx->streams[streamIndex];
-
-                duration = (float) stream->duration;
-                float durationInSeconds = duration / stream->time_base.den;
-                float frameRate = (float) stream->avg_frame_rate.num / (float) stream->avg_frame_rate.den;
-                totalFrames = durationInSeconds * frameRate;
-
-                videoStreamIndex = streamIndex;
-                break;
-            }
-        }
 
         ImGui_ImplGlfwGL3_NewFrame();
 
@@ -554,7 +530,7 @@ static bool RunGUI(MpegTS_XML &mpts)
 
             avformat_flush(g_ifmt_ctx);
             avio_flush(g_ifmt_ctx->pb);
-            avformat_seek_file(g_ifmt_ctx, videoStreamIndex, seekBytes, seekBytes, seekBytes, AVSEEK_FLAG_BYTE);
+            avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, seekBytes, seekBytes, seekBytes, AVSEEK_FLAG_BYTE);
 
             AVFrame *pNextFrame = GetNextVideoFrame();
 
@@ -592,7 +568,7 @@ static bool RunGUI(MpegTS_XML &mpts)
                     IncAndClamp(blue, blueInc, 0.f, 255.f);
 
                     FlipAvFrame(nextFrame);
-                    WriteFrame(g_stream_ctx[videoStreamIndex].dec_ctx, nextFrame, 0, g_pTexturePresenter);
+                    WriteFrame(g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx, nextFrame, 0, g_pTexturePresenter);
 
                     if(framesDecoded == framesToDecode)
                     {
@@ -611,15 +587,15 @@ static bool RunGUI(MpegTS_XML &mpts)
         }
 
         if(!bNeedFrame && g_pFrame)
-            WriteFrame(g_stream_ctx[videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter);
+            WriteFrame(g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter);
 
         ImGui::Begin("Frames");
 
-        unsigned int frame = seekFrameNumber;
+        int frame = seekFrameNumber;
 
         int node_clicked = -1;                // Temporary storage of what node we have clicked to process selection at the end of the loop. May be a pointer to your own node type, etc.
 
-        int high = seekFrameNumber + 30;
+        size_t high = seekFrameNumber + 30;
         high = MIN(high, mpts.m_videoAccessUnits.size());
 
         if (ImGui::CollapsingHeader("Video"))
@@ -651,7 +627,7 @@ static bool RunGUI(MpegTS_XML &mpts)
 
                                 avformat_flush(g_ifmt_ctx);
                                 avio_flush(g_ifmt_ctx->pb);
-                                avformat_seek_file(g_ifmt_ctx, videoStreamIndex, seekBytes, seekBytes, seekBytes, AVSEEK_FLAG_BYTE);
+                                avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, seekBytes, seekBytes, seekBytes, AVSEEK_FLAG_BYTE);
 
                                 AVFrame *pNextFrame = GetNextVideoFrame();
 
@@ -788,9 +764,22 @@ int main(int argc, char* argv[])
     else
         mpts.ParsePacketList(root);
 
+    if(0 != OpenInputFile(mpts))
+        return false;
+
     // Show as GUI
     if(RunGUI(mpts))
+    {
+        for(int i = 0; i < g_ifmt_ctx->nb_streams; i++)
+        {
+            if(&(g_stream_ctx[i]))
+                avcodec_free_context(&g_stream_ctx[i].dec_ctx);
+        }
+
+        avformat_close_input(&g_ifmt_ctx);
+
         return 0;
+    }
 
     return 1;
 }

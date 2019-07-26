@@ -153,6 +153,8 @@ public:
     MpegTS_XML()
     : m_bParsedMpegTSDescriptor(false)
     , m_bParsedPMT(false)
+    , m_videoStreamIndex(-1)
+    , m_audioStreamIndex(-1)
     {
     }
 
@@ -165,6 +167,8 @@ public:
     MpegTSDescriptor            m_mpegTSDescriptor;
     std::vector<AccessUnit>     m_videoAccessUnits;
     std::vector<AccessUnit>     m_audioAccessUnits;
+    int                         m_videoStreamIndex;
+    int                         m_audioStreamIndex;
 
 private:
     AccessUnit                  m_currentVideoAU;
