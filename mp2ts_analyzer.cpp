@@ -469,7 +469,6 @@ enum PlayState
     eSeeking
 };
 
-
 static bool RunGUI(MpegTS_XML &mpts)
 {
     static PlayState g_playState = eStopped;
@@ -536,9 +535,17 @@ static bool RunGUI(MpegTS_XML &mpts)
         if (ImGui::ArrowButton("Play", ImGuiDir_Right))
         {
             if(eStopped == g_playState)
+            {
+                size_t numVideoFrames = mpts.m_videoAccessUnits.size();
+                framesToDecode = numVideoFrames - frameDisplaying;
                 g_playState = ePlaying;
+                bNeedFrame = true;
+            }
             else
+            {
                 g_playState = eStopped;
+                bNeedFrame = false;
+            }
         }
 
         float fileBytePos = (float) mpts.m_mpegTSDescriptor.fileSize * ((float) seekValue / 100.f);
@@ -559,21 +566,19 @@ static bool RunGUI(MpegTS_XML &mpts)
             avio_flush(g_ifmt_ctx->pb);
             avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, seekBytes, seekBytes, seekBytes, AVSEEK_FLAG_BYTE);
 
-            AVFrame *pNextFrame = GetNextVideoFrame();
+            if(g_pFrame)
+                av_frame_free(&g_pFrame);
 
-            while(pNextFrame && AV_PICTURE_TYPE_I != pNextFrame->pict_type)
-                pNextFrame = GetNextVideoFrame();
+            g_pFrame = GetNextVideoFrame();
 
-            if(pNextFrame)
+            while(g_pFrame && AV_PICTURE_TYPE_I != g_pFrame->pict_type)
             {
-                if(g_pFrame)
-                    av_frame_free(&g_pFrame);
-
-                g_pFrame = av_frame_clone(pNextFrame);
-                av_frame_free(&pNextFrame);
-
-                frameDisplaying = seekFrameNumber;
+                av_frame_free(&g_pFrame);
+                g_pFrame = GetNextVideoFrame();
             }
+
+            if(g_pFrame)
+                frameDisplaying = seekFrameNumber;
 
             bNeedFrame = false;
         }
@@ -582,36 +587,28 @@ static bool RunGUI(MpegTS_XML &mpts)
             // If still frames to read
             if(bNeedFrame)
             {
-                AVFrame *pNextFrame = GetNextVideoFrame();
+                if(g_pFrame)
+                    av_frame_free(&g_pFrame);
 
-                if (pNextFrame)
+                g_pFrame = GetNextVideoFrame();
+
+                if (g_pFrame)
                 {
                     framesDecoded++;
 
-                    IncAndClamp(red, redInc, 0.f, 255.f);
-                    IncAndClamp(green, greenInc, 0.f, 255.f);
-                    IncAndClamp(blue, blueInc, 0.f, 255.f);
-
-                    WriteFrame(g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx, pNextFrame, 0, g_pTexturePresenter);
+                    //IncAndClamp(red, redInc, 0.f, 255.f);
+                    //IncAndClamp(green, greenInc, 0.f, 255.f);
+                    //IncAndClamp(blue, blueInc, 0.f, 255.f);
 
                     frameDisplaying++;
 
                     if(framesDecoded == framesToDecode)
-                    {
-                        if(g_pFrame)
-                            av_frame_free(&g_pFrame);
-
-                        g_pFrame = av_frame_clone(pNextFrame);
-
                         bNeedFrame = false;
-                    }
                 }
-
-                av_frame_free(&pNextFrame);
             }
         }
 
-        if(!bNeedFrame && g_pFrame)
+        if(g_pFrame)
             WriteFrame(g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter);
 
         ImGui::Begin("Frames");
@@ -625,13 +622,11 @@ static bool RunGUI(MpegTS_XML &mpts)
 
         if (ImGui::CollapsingHeader("Video"))
         {
-            //for(std::vector<AccessUnit>::iterator i = mpts.m_videoAccessUnits.begin(); i < mpts.m_videoAccessUnits.end(); i++)
             for(int i = seekFrameNumber; i < high; i++)
             {
                 AccessUnit &au = mpts.m_videoAccessUnits[i-1];
 
                 size_t numPackets = 0;
-                //for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
                 for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
                     numPackets += j->numPackets;
 
@@ -641,11 +636,6 @@ static bool RunGUI(MpegTS_XML &mpts)
                     {
                         if(frame != frameDisplaying)
                         {
-                            //avformat_flush(g_ifmt_ctx);
-                            //avio_flush(g_ifmt_ctx->pb);
-                            //avformat_seek_file(g_ifmt_ctx, videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
-                            //avformat_seek_file(g_ifmt_ctx, videoStreamIndex, frame, frame, frame, AVSEEK_FLAG_FRAME);
-
                             if(frame < frameDisplaying)
                             {
                                 uint64_t seekBytes = (uint64_t) fileBytePos;
@@ -654,31 +644,42 @@ static bool RunGUI(MpegTS_XML &mpts)
                                 avio_flush(g_ifmt_ctx->pb);
                                 avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, seekBytes, seekBytes, seekBytes, AVSEEK_FLAG_BYTE);
 
-                                AVFrame *pNextFrame = GetNextVideoFrame();
+                                if(g_pFrame)
+                                    av_frame_free(&g_pFrame);
 
-                                while(pNextFrame && AV_PICTURE_TYPE_I != pNextFrame->pict_type)
-                                    pNextFrame = GetNextVideoFrame();
+                                g_pFrame = GetNextVideoFrame();
 
-                                av_frame_free(&pNextFrame);
+                                while(g_pFrame && AV_PICTURE_TYPE_I != g_pFrame->pict_type)
+                                {
+                                    av_frame_free(&g_pFrame);
+                                    g_pFrame = GetNextVideoFrame();
+                                }
 
                                 if(frame == seekFrameNumber)
-                                    framesToDecode = 1;
+                                {
+                                    framesToDecode = 0;
+                                    bNeedFrame = false;
+                                }
                                 else
+                                {
                                     framesToDecode = frame - seekFrameNumber;
+                                    bNeedFrame = true;
+                                }
 
                                 frameDisplaying = seekFrameNumber;
                             }
                             else
+                            {
                                 framesToDecode = frame - frameDisplaying;
+                                bNeedFrame = true;
+                            }
 
                             framesDecoded = 0;
-                            bNeedFrame = true;
                         }
                     };
 
                     ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
-                    //for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
                     for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
                     {
                         ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%d, Num Packets:%d", j->startByteLocation, j->numPackets);
