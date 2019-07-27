@@ -97,8 +97,8 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
 
     element = root->FirstChildElement("frame");
 
-    unsigned int videoFrameNumber = 1;
-    unsigned int audioFrameNumber = 1;
+    unsigned int videoFrameNumber = 0;
+    unsigned int audioFrameNumber = 0;
 
     while(element)
     {
@@ -170,8 +170,8 @@ bool MpegTS_XML::ParsePacketList(tinyxml2::XMLElement* root)
 
     long lastPID = -1;
 
-    unsigned int videoFrameNumber = 1;
-    unsigned int audioFrameNumber = 1;
+    unsigned int videoFrameNumber = 0;
+    unsigned int audioFrameNumber = 0;
 
     while(element)
     {

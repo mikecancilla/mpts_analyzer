@@ -83,6 +83,14 @@ extern int DoFFMpegOpenGLTest(const std::string &inFileName);
 #define WINDOW_HEIGHT 900
 
 #define MIN(x,y) ((x) < (y) ? (x) : (y))
+#define MAX(x,y) ((x) > (y) ? (x) : (y))
+
+enum PlayState
+{
+    eStopped,
+    ePlaying,
+    eSeeking
+};
 
 typedef struct StreamContext {
     AVCodecContext *dec_ctx;
@@ -98,6 +106,24 @@ static GLFWwindow       *g_window = NULL;
 static TexturePresenter *g_pTexturePresenter = NULL;
 
 static char             g_error[AV_ERROR_MAX_STRING_SIZE] = {0};
+
+template <typename T>
+void IncAndClamp(T &value, T &incBy, T min, T max)
+
+{
+    value += incBy;
+
+    if(value < min)
+    {
+        value = min;
+        incBy *= (T) -1;
+    }
+    else if(value > max)
+    {
+        value = max;
+        incBy *= (T) -1;
+    }
+}
 
 static int OpenInputFile(MpegTS_XML &mpts)
 {
@@ -246,7 +272,7 @@ static int CloseOpenGL()
     return 0;
 }
 
-void FlipAvFrame(AVFrame *pFrame)
+static void FlipAvFrame(AVFrame *pFrame)
 {
     // We need to flip the video image
     //  See: https://lists.ffmpeg.org/pipermail/ffmpeg-user/2011-May/000976.html
@@ -260,68 +286,77 @@ void FlipAvFrame(AVFrame *pFrame)
     pFrame->linesize[2] = -(pFrame->linesize[2]);
 }
 
+static uint8_t *dst_data[4];
+static int dst_linesize[4];
+
 static bool WriteFrame(AVCodecContext *dec_ctx,
                        AVFrame *frame,
                        int frame_num,
                        TexturePresenter *pTexturePresenter)
 {
-    uint8_t *dst_data[4];
-    int dst_linesize[4];
     enum AVPixelFormat dst_pix_fmt = AV_PIX_FMT_RGBA;
     struct SwsContext *sws_ctx = NULL;
+    static AVFrame *lastFrame = NULL;
 
-    // create scaling context
-    sws_ctx = sws_getContext(frame->width, frame->height, (enum AVPixelFormat) frame->format,
-                             frame->width, frame->height, dst_pix_fmt,
-                             SWS_BILINEAR, NULL, NULL, NULL);
-    if (!sws_ctx)
+    if(lastFrame != frame)
     {
-        fprintf(stderr,
-                "Impossible to create scale context for the conversion "
-                "fmt:%s s:%dx%d -> fmt:%s s:%dx%d\n",
-                av_get_pix_fmt_name((enum AVPixelFormat) frame->format), frame->width, frame->height,
-                av_get_pix_fmt_name(dst_pix_fmt), frame->width, frame->height);
-        return false;
+        if(dst_data[0])
+            av_freep(&dst_data[0]);
+
+        // create scaling context
+        sws_ctx = sws_getContext(frame->width, frame->height, (enum AVPixelFormat) frame->format,
+                                 frame->width, frame->height, dst_pix_fmt,
+                                 SWS_BILINEAR, NULL, NULL, NULL);
+        if (!sws_ctx)
+        {
+            fprintf(stderr,
+                    "Impossible to create scale context for the conversion "
+                    "fmt:%s s:%dx%d -> fmt:%s s:%dx%d\n",
+                    av_get_pix_fmt_name((enum AVPixelFormat) frame->format), frame->width, frame->height,
+                    av_get_pix_fmt_name(dst_pix_fmt), frame->width, frame->height);
+            return false;
+        }
+
+        int dst_bufsize = 0;
+
+        // buffer is going to be rawvideo file, no alignment
+        if ((dst_bufsize = av_image_alloc(dst_data, dst_linesize,
+                                          frame->width, frame->height, dst_pix_fmt, 1)) < 0)
+        {
+            fprintf(stderr, "Could not allocate destination image\n");
+            return false;
+        }
+
+        /* convert to destination format */
+        sws_scale(sws_ctx,
+                  (const uint8_t * const*) frame->data,
+                  frame->linesize,
+                  0,
+                  frame->height,
+                  dst_data,
+                  dst_linesize);
+
+        // Save the frame to disk, only works with 24 bpp
+        //SaveFrame(dst_data[0], frame->width, frame->height, dst_linesize[0], frame_num);
+        //return true;
+
+        /*
+        // Determine required buffer size and allocate buffer
+        int numBytes = avpicture_get_size(AV_PIX_FMT_RGB24,
+                                          frame->width,
+                                          frame->height);
+
+        uint8_t *buffer = (uint8_t*) malloc(numBytes);
+
+        DeStride(dst_data[0], frame->width, frame->height, dst_linesize[0], buffer);
+        */
     }
-
-    int dst_bufsize = 0;
-
-    // buffer is going to be rawvideo file, no alignment
-    if ((dst_bufsize = av_image_alloc(dst_data, dst_linesize,
-                                      frame->width, frame->height, dst_pix_fmt, 1)) < 0)
-    {
-        fprintf(stderr, "Could not allocate destination image\n");
-        return false;
-    }
-
-    /* convert to destination format */
-    sws_scale(sws_ctx,
-              (const uint8_t * const*) frame->data,
-              frame->linesize,
-              0,
-              frame->height,
-              dst_data,
-              dst_linesize);
-
-    // Save the frame to disk, only works with 24 bpp
-    //SaveFrame(dst_data[0], frame->width, frame->height, dst_linesize[0], frame_num);
-    //return true;
-
-    /*
-    // Determine required buffer size and allocate buffer
-    int numBytes = avpicture_get_size(AV_PIX_FMT_RGB24,
-                                      frame->width,
-                                      frame->height);
-
-    uint8_t *buffer = (uint8_t*) malloc(numBytes);
-
-    DeStride(dst_data[0], frame->width, frame->height, dst_linesize[0], buffer);
-    */
 
 	pTexturePresenter->Render(dst_data[0], dec_ctx->width, dec_ctx->height);
 
-    av_freep(&dst_data[0]);
     sws_freeContext(sws_ctx);
+
+    lastFrame = frame;
 
     return true;
 }
@@ -407,7 +442,7 @@ static void DoSeekTest()
     int seekValue = seekValueLast;
     ImGui::SliderInt("Seek", &seekValue, 1, 100);
 
-    if(seekValueLast != seekValue && seekValue > 0)
+    if(seekValueLast != seekValue)
     {
         seekValueLast = seekValue;
 
@@ -430,28 +465,16 @@ static void DoSeekTest()
     ImGui::End();
 }
 
-template <typename T>
-void IncAndClamp(T &value, T &incBy, T min, T max)
-
+static int64_t BytePosOfLastAU(std::vector<AccessUnit> &accessUnitList)
 {
-    value += incBy;
-
-    if(value < min)
-    {
-        value = min;
-        incBy *= (T) -1;
-    }
-    else if(value > max)
-    {
-        value = max;
-        incBy *= (T) -1;
-    }
+    AccessUnit lastAccessUnit = accessUnitList.back();
+    return lastAccessUnit.accessUnitElements[0].startByteLocation;
 }
 
-int FrameNumberFromBytePos(int64_t bytePos, std::vector<AccessUnit> &accessUnitList)
+static int FrameNumberFromBytePos(int64_t bytePos, std::vector<AccessUnit> &accessUnitList)
 {
     if(0 == bytePos)
-        return 1;
+        return 0;
 
     for(std::vector<AccessUnit>::iterator i = accessUnitList.begin(); i < accessUnitList.end(); i++)
     {
@@ -459,15 +482,9 @@ int FrameNumberFromBytePos(int64_t bytePos, std::vector<AccessUnit> &accessUnitL
             return i->frameNumber;
     }
 
-    return -1;
+    AccessUnit lastAccessUnit = accessUnitList.back();
+    return lastAccessUnit.frameNumber;
 }
-
-enum PlayState
-{
-    eStopped,
-    ePlaying,
-    eSeeking
-};
 
 static bool RunGUI(MpegTS_XML &mpts)
 {
@@ -494,11 +511,11 @@ static bool RunGUI(MpegTS_XML &mpts)
 
     int ret = 0;
     int frame_num = 0;
-    bool bNeedFrame = true;
+    bool bNeedFrame = false;
 
-    int frameDisplaying = 0;
-    int framesToDecode = 1;
-    int framesDecoded = 0;
+    size_t frameDisplaying = 0;
+    size_t framesToDecode = 0;
+    size_t framesDecoded = 0;
 
     float red = 114.f;
     float redInc = -3.f;
@@ -507,7 +524,20 @@ static bool RunGUI(MpegTS_XML &mpts)
     float blue = 154.f;
     float blueInc = 7.f;
 
+    size_t numVideoFrames = mpts.m_videoAccessUnits.size();
+    size_t bytePosOfLastAU = BytePosOfLastAU(mpts.m_videoAccessUnits);
+
     Renderer renderer;
+
+    avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
+
+    g_pFrame = GetNextVideoFrame();
+
+    if(!g_pFrame)
+    {
+        fprintf(stderr, "Error: Unable to decode %s\n", mpts.m_mpegTSDescriptor.fileName);
+        return false;
+    }
 
     while(!glfwWindowShouldClose(g_window))
     {
@@ -525,18 +555,19 @@ static bool RunGUI(MpegTS_XML &mpts)
 
         static int seekValueLast = 0;
         int seekValue = seekValueLast;
-        ImGui::SliderInt("##Seek", &seekValue, 1, 100);
+        ImGui::SliderInt("##Seek", &seekValue, 0, 100);
 
         ImGui::SameLine();
 
 //        ImVec4 color = ImVec4(red/255.0f, green/255.0f, blue/255.0f, 1.f);
 //        ImGui::ColorButton("ColorButton", *(ImVec4*)&color, 0x00020000, ImVec2(20,20));
 
-        if (ImGui::ArrowButton("Play", ImGuiDir_Right))
+        // Keyboard or Play Button
+        if ((ImGui::GetIO().KeysDownDuration[32] > 0.f && ImGui::GetIO().KeysDownDuration[32] < 0.04f) ||
+            ImGui::ArrowButton("Play", ImGuiDir_Right))
         {
             if(eStopped == g_playState)
             {
-                size_t numVideoFrames = mpts.m_videoAccessUnits.size();
                 framesToDecode = numVideoFrames - frameDisplaying;
                 g_playState = ePlaying;
                 bNeedFrame = true;
@@ -548,14 +579,63 @@ static bool RunGUI(MpegTS_XML &mpts)
             }
         }
 
-        float fileBytePos = (float) mpts.m_mpegTSDescriptor.fileSize * ((float) seekValue / 100.f);
-        int seekFrameNumber =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnits);
+        // Right Arrow Key
+        if (ImGui::IsKeyPressed(262))
+        {
+            g_playState = eStopped;
+            bNeedFrame = true;
+            framesDecoded = 0;
+            framesToDecode = 1;
+        }
 
-        ImGui::Text("Displaying Frame:%d, Seek Frame:%d, Seek Byte:%llu", frameDisplaying, seekFrameNumber, (int64_t) fileBytePos);
+        bool bForceSeek = false;
+
+        // Left Arrow Key
+        if (ImGui::IsKeyPressed(263))
+        {
+            seekValue--;
+            seekValue = MAX(0, seekValue);
+
+            if(seekValueLast == seekValue &&
+               frameDisplaying != 0)
+                bForceSeek = true;
+        }
+
+        size_t fileBytePos = (size_t) ((float) bytePosOfLastAU * ((float) seekValue / 100.f));
+
+        static size_t lastFileBytePos = 0;
+        int seekFrameNumber = 0;
+
+        if(lastFileBytePos != fileBytePos)
+        {
+            seekFrameNumber =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnits);
+            lastFileBytePos = fileBytePos;
+        }
+
+        char frameType = ' ';
+
+        if(g_pFrame)
+        {
+            switch(g_pFrame->pict_type)
+            {
+                case AV_PICTURE_TYPE_I:
+                    frameType = 'I';
+                break;
+                case AV_PICTURE_TYPE_P:
+                    frameType = 'P';
+                break;
+                case AV_PICTURE_TYPE_B:
+                    frameType = 'B';
+                break;
+            }
+        }
+
+        ImGui::Text("Displaying:%d of %d, Type:%c, Seek Frame:%d, Seek Byte:%llu", frameDisplaying, numVideoFrames, frameType, seekFrameNumber, (int64_t) fileBytePos);
 
         ImGui::End(); // Seek
 
-        if(seekValueLast != seekValue && seekValue > 0)
+        if(seekValueLast != seekValue ||
+           bForceSeek)
         {
             g_playState = eStopped;
             seekValueLast = seekValue;
@@ -604,6 +684,10 @@ static bool RunGUI(MpegTS_XML &mpts)
 
                     if(framesDecoded == framesToDecode)
                         bNeedFrame = false;
+
+                    float percent = ((float) frameDisplaying / (float)numVideoFrames) *100.f;
+                    seekValue = percent;
+                    seekValueLast = seekValue;
                 }
             }
         }
@@ -613,24 +697,28 @@ static bool RunGUI(MpegTS_XML &mpts)
 
         ImGui::Begin("Frames");
 
-        int frame = seekFrameNumber;
+        int frame = 0;
 
-        int node_clicked = -1;                // Temporary storage of what node we have clicked to process selection at the end of the loop. May be a pointer to your own node type, etc.
+//        if(ePlaying == g_playState)
+            frame = frameDisplaying;
+//        else
+//            frame = seekFrameNumber;
 
-        size_t high = seekFrameNumber + 30;
-        high = MIN(high, mpts.m_videoAccessUnits.size());
+        int high = frame + 30;
+
+        high = MIN(high, numVideoFrames);
 
         if (ImGui::CollapsingHeader("Video"))
         {
-            for(int i = seekFrameNumber; i < high; i++)
+            for(int i = frame; i < high; i++)
             {
-                AccessUnit &au = mpts.m_videoAccessUnits[i-1];
+                AccessUnit &au = mpts.m_videoAccessUnits[i];
 
                 size_t numPackets = 0;
                 for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
                     numPackets += j->numPackets;
 
-                if(ImGui::TreeNode((void*) au.frameNumber, "Frame:%d, Name:%s, Packets:%d, PID:%ld", au.frameNumber, au.esd.name.c_str(), numPackets, au.esd.pid))
+                if(ImGui::TreeNode((void*) au.frameNumber, "Frame:%u, Name:%s, Packets:%llu, PID:%ld", au.frameNumber, au.esd.name.c_str(), numPackets, au.esd.pid))
                 {
                     if (ImGui::SmallButton("View"))
                     {
@@ -682,7 +770,7 @@ static bool RunGUI(MpegTS_XML &mpts)
 
                     for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
                     {
-                        ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%d, Num Packets:%d", j->startByteLocation, j->numPackets);
+                        ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%llu, Num Packets:%llu", j->startByteLocation, j->numPackets);
                     }
 
                     ImGui::TreePop();
