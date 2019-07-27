@@ -292,13 +292,13 @@ static int dst_linesize[4];
 static bool WriteFrame(AVCodecContext *dec_ctx,
                        AVFrame *frame,
                        int frame_num,
-                       TexturePresenter *pTexturePresenter)
+                       TexturePresenter *pTexturePresenter,
+                       bool &bNewFrame)
 {
     enum AVPixelFormat dst_pix_fmt = AV_PIX_FMT_RGBA;
     struct SwsContext *sws_ctx = NULL;
-    static AVFrame *lastFrame = NULL;
 
-    if(lastFrame != frame)
+    if(bNewFrame)
     {
         if(dst_data[0])
             av_freep(&dst_data[0]);
@@ -350,13 +350,13 @@ static bool WriteFrame(AVCodecContext *dec_ctx,
 
         DeStride(dst_data[0], frame->width, frame->height, dst_linesize[0], buffer);
         */
+
+        bNewFrame = false;
     }
 
 	pTexturePresenter->Render(dst_data[0], dec_ctx->width, dec_ctx->height);
 
     sws_freeContext(sws_ctx);
-
-    lastFrame = frame;
 
     return true;
 }
@@ -459,8 +459,9 @@ static void DoSeekTest()
         g_pFrame = GetNextVideoFrame();
     }
 
+    bool bNewFrame = true;
     if(g_pFrame)
-        WriteFrame(g_stream_ctx[videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter);
+        WriteFrame(g_stream_ctx[videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter, bNewFrame);
 
     ImGui::End();
 }
@@ -538,6 +539,8 @@ static bool RunGUI(MpegTS_XML &mpts)
         fprintf(stderr, "Error: Unable to decode %s\n", mpts.m_mpegTSDescriptor.fileName);
         return false;
     }
+
+    bool bNewFrame = true;
 
     while(!glfwWindowShouldClose(g_window))
     {
@@ -655,6 +658,7 @@ static bool RunGUI(MpegTS_XML &mpts)
             {
                 av_frame_free(&g_pFrame);
                 g_pFrame = GetNextVideoFrame();
+                bNewFrame = true;
             }
 
             if(g_pFrame)
@@ -688,12 +692,13 @@ static bool RunGUI(MpegTS_XML &mpts)
                     float percent = ((float) frameDisplaying / (float)numVideoFrames) *100.f;
                     seekValue = percent;
                     seekValueLast = seekValue;
+                    bNewFrame = true;
                 }
             }
         }
 
         if(g_pFrame)
-            WriteFrame(g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter);
+            WriteFrame(g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter, bNewFrame);
 
         ImGui::Begin("Frames");
 
