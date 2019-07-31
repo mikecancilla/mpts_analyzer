@@ -103,3 +103,82 @@ void DoMyXMLTest(char *pXMLFile)
 
     printf("</%s>\n", root->Value());
 }
+
+using namespace tinyxml2;
+
+// Create XML from scratch, not from reading a file.
+void DoMyXMLTest2()
+{
+	{
+		// Test: Programmatic DOM nodes insertion return values
+		XMLDocument doc;
+
+		XMLNode* first = doc.NewElement( "firstElement" );
+		XMLNode* firstAfterInsertion = doc.InsertFirstChild( first );
+
+		XMLNode* last = doc.NewElement( "lastElement" );
+		XMLNode* lastAfterInsertion = doc.InsertEndChild( last );
+
+		XMLNode* middle = doc.NewElement( "middleElement" );
+		XMLNode* middleAfterInsertion = doc.InsertAfterChild( first, middle );
+        doc.Print();
+	}
+	{
+		// Test: Programmatic DOM
+		// Build:
+		//		<element>
+		//			<!--comment-->
+		//			<sub attrib="1" />
+		//			<sub attrib="2" />
+		//			<sub attrib="3" >& Text!</sub>
+		//		<element>
+
+		XMLDocument* doc = new XMLDocument();
+		XMLNode* element = doc->InsertEndChild( doc->NewElement( "element" ) );
+
+		XMLElement* sub[3] = { doc->NewElement( "sub" ), doc->NewElement( "sub" ), doc->NewElement( "sub" ) };
+		for( int i=0; i<3; ++i ) {
+			sub[i]->SetAttribute( "attrib", i );
+		}
+		element->InsertEndChild( sub[2] );
+
+		const int dummyInitialValue = 1000;
+		int dummyValue = dummyInitialValue;
+
+		XMLNode* comment = element->InsertFirstChild( doc->NewComment( "comment" ) );
+		comment->SetUserData(&dummyValue);
+		element->InsertAfterChild( comment, sub[0] );
+		element->InsertAfterChild( sub[0], sub[1] );
+		sub[2]->InsertFirstChild( doc->NewText( "& Text!" ));
+		doc->Print();
+
+		// And now deletion:
+		element->DeleteChild( sub[2] );
+		doc->DeleteNode( comment );
+
+		element->FirstChildElement()->SetAttribute( "attrib", true );
+		element->LastChildElement()->DeleteAttribute( "attrib" );
+
+		const int defaultIntValue = 10;
+		const int replacementIntValue = 20;
+		int value1 = defaultIntValue;
+		int value2 = doc->FirstChildElement()->LastChildElement()->IntAttribute( "attrib", replacementIntValue );
+		XMLError result = doc->FirstChildElement()->LastChildElement()->QueryIntAttribute( "attrib", &value1 );
+
+		doc->Print();
+
+		{
+			XMLPrinter streamer;
+			doc->Print( &streamer );
+			printf( "%s", streamer.CStr() );
+		}
+		{
+			XMLPrinter streamer( 0, true );
+			doc->Print( &streamer );
+		}
+
+//        doc->SaveFile( "./resources/out/pretty.xml" );
+//		doc->SaveFile( "./resources/out/compact.xml", true );
+		delete doc;
+	}
+}
