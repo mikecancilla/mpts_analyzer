@@ -77,6 +77,7 @@ extern "C"
 #include "mp2ts_xml.h"
 
 extern void DoMyXMLTest(char *pXMLFile);
+extern void DoMyXMLTest2();
 extern int DoFFMpegOpenGLTest(const std::string &inFileName);
 
 #define WINDOW_WIDTH 1600
@@ -842,6 +843,8 @@ static bool RunGUI(MpegTS_XML &mpts)
 int main(int argc, char* argv[])
 {
 //    DoMyXMLTest(argv[1]);
+//    DoMyXMLTest2();
+//    return 0;
 
 /*
     if(1)
