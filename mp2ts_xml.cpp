@@ -49,7 +49,7 @@ bool MpegTS_XML::ParsePMT(tinyxml2::XMLElement* root)
                     pAU->esd.pid = strtol(pid->GetText(), NULL, 16);
 
                     tinyxml2::XMLElement* type = stream->FirstChildElement("type_number");
-                    pAU->esd.type = (eStreamType) strtol(type->GetText(), NULL, 16);
+                    pAU->esd.streamType = (eStreamType) strtol(type->GetText(), NULL, 16);
 
                     tinyxml2::XMLElement* typeName = stream->FirstChildElement("type_name");
                     pAU->esd.name = typeName->GetText();
@@ -88,6 +88,20 @@ bool MpegTS_XML::ParseMpegTSDescriptor(tinyxml2::XMLElement* root)
     return true;
 }
 
+static eFrameType ConvertStringToFrameType(std::string input)
+{
+    if(input == "I")
+        return eFrameI;
+
+    if(input == "P")
+        return eFrameP;
+
+    if(input == "B")
+        return eFrameB;
+
+    return eFrameUnknown;
+}
+
 bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
 {
     if(NULL == root)
@@ -114,6 +128,11 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
 
         if(pAU)
         {
+            tinyxml2::XMLElement* type = element->FirstChildElement("type");
+            if(type)
+                //pAU->frameType = ConvertStringToFrameType(type->GetText());
+                pAU->frameType = type->GetText();
+
             tinyxml2::XMLElement* slice = element->FirstChildElement("slice");
 
             while(slice)

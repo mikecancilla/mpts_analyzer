@@ -72,6 +72,14 @@ enum eStreamType
     ePrivate_ES_VC1                             = 0xea
 };
 
+enum eFrameType
+{
+    eFrameUnknown = 0,
+    eFrameI = 1,
+    eFrameP = 2,
+    eFrameB = 3
+};
+
 struct AccessUnitElement
 {
     int64_t startByteLocation;
@@ -93,19 +101,19 @@ struct AccessUnitElement
 struct ElementaryStreamDescriptor
 {
     std::string name;
-    eStreamType type;
+    eStreamType streamType;
     long pid;
 
     ElementaryStreamDescriptor()
         : name("")
-        , type(eReserved)
+        , streamType(eReserved)
         , pid(-1)
     {
     }
 
-    ElementaryStreamDescriptor(std::string name, eStreamType type, long int pid)
+    ElementaryStreamDescriptor(std::string name, eStreamType streamType, long int pid)
         : name(name)
-        , type(type)
+        , streamType(streamType)
         , pid(pid)
     {
     }
@@ -119,16 +127,19 @@ struct AccessUnit
     
     AccessUnit()
         : frameNumber(0)
+        , frameType("")
     {
     }
 
     AccessUnit(std::string name, eStreamType type, long pid)
         : esd(name, type, pid)
         , frameNumber(0)
+        , frameType("")
     {
     }
 
     unsigned int frameNumber;
+    std::string frameType;
 };
 
 struct MpegTSDescriptor
@@ -171,9 +182,9 @@ public:
     int                         m_audioStreamIndex;
 
 private:
-    AccessUnit                  m_currentVideoAU;
-    AccessUnit                  m_currentAudioAU;
     bool                        m_bParsedMpegTSDescriptor = false;
     bool                        m_bParsedPMT = false;
+    AccessUnit                  m_currentVideoAU;
+    AccessUnit                  m_currentAudioAU;
     //std::vector<ElementaryStream> gElementaryStreams;
 };
