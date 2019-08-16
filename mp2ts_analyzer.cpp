@@ -480,7 +480,7 @@ static int FrameNumberFromBytePos(int64_t bytePos, std::vector<AccessUnit> &acce
 
     for(std::vector<AccessUnit>::iterator i = accessUnitList.begin(); i < accessUnitList.end(); i++)
     {
-        if(i->accessUnitElements[0].startByteLocation > bytePos)
+        if(i->accessUnitElements[0].startByteLocation >= bytePos)
             return i->frameNumber;
     }
 
@@ -608,7 +608,7 @@ static bool RunGUI(MpegTS_XML &mpts)
         size_t fileBytePos = (size_t) ((float) bytePosOfLastAU * ((float) seekValue / 100.f));
 
         static size_t lastFileBytePos = 0;
-        int seekFrameNumber = 0;
+        static int seekFrameNumber = 0;
 
         if(lastFileBytePos != fileBytePos)
         {
