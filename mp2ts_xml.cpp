@@ -102,6 +102,24 @@ static eFrameType ConvertStringToFrameType(std::string input)
     return eFrameUnknown;
 }
 
+static uint64_t ConvertStringToPTS(std::string input)
+{
+    uint64_t timeStamp = 0;
+
+    sscanf(input.c_str(), "%llu", &timeStamp);
+
+    return timeStamp;
+}
+
+static float ConvertStringToPTSSeconds(std::string input)
+{
+    float timeStamp = 0;
+
+    sscanf(input.c_str(), "%*s (%f)", &timeStamp);
+
+    return timeStamp;
+}
+
 bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
 {
     if(NULL == root)
@@ -128,28 +146,40 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
 
         if(pAU)
         {
+            tinyxml2::XMLElement* pts = element->FirstChildElement("PTS");
+            if(pts)
+            {
+                pAU->pts = ConvertStringToPTS(pts->GetText());
+                pAU->pts_seconds = ConvertStringToPTSSeconds(pts->GetText());
+            }
+
             tinyxml2::XMLElement* type = element->FirstChildElement("type");
             if(type)
                 //pAU->frameType = ConvertStringToFrameType(type->GetText());
                 pAU->frameType = type->GetText();
 
-            tinyxml2::XMLElement* slice = element->FirstChildElement("slice");
+            tinyxml2::XMLElement* slices = element->FirstChildElement("slices");
 
-            while(slice)
+            if(slices)
             {
-                AccessUnitElement aue;
-                aue.startByteLocation = slice->Int64Attribute("byte");
-                aue.numPackets = slice->Int64Attribute("packets");
+                tinyxml2::XMLElement* slice = slices->FirstChildElement("slice");
 
-                pAU->accessUnitElements.push_back(aue);
+                while(slice)
+                {
+                    AccessUnitElement aue;
+                    aue.startByteLocation = slice->Int64Attribute("byte");
+                    aue.numPackets = slice->Int64Attribute("packets");
 
-                slice = slice->NextSiblingElement("slice");
+                    pAU->accessUnitElements.push_back(aue);
+
+                    slice = slice->NextSiblingElement("slice");
+                }
             }
 
             if(pAU == &m_currentVideoAU)
             {
                 m_currentVideoAU.frameNumber = videoFrameNumber++;
-                m_videoAccessUnits.push_back(m_currentVideoAU);
+                m_videoAccessUnitsDecode.push_back(m_currentVideoAU);
             }
             else if(pAU == &m_currentAudioAU)
             {
@@ -165,7 +195,7 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
 
     if(m_currentVideoAU.accessUnitElements.size())
     {
-        m_videoAccessUnits.push_back(m_currentVideoAU);
+        m_videoAccessUnitsDecode.push_back(m_currentVideoAU);
         m_currentVideoAU.accessUnitElements.clear();
     }
         
@@ -183,89 +213,129 @@ bool MpegTS_XML::ParsePacketList(tinyxml2::XMLElement* root)
     if(NULL == root)
         return false;
 
-    tinyxml2::XMLElement* element = nullptr;
+    bool ret = false;
 
-    element = root->FirstChildElement("packet");
-
-    long lastPID = -1;
-
-    unsigned int videoFrameNumber = 0;
-    unsigned int audioFrameNumber = 0;
-
-    while(element)
+    if(m_mpegTSDescriptor.terse)
+        ret = ParsePacketListTerse(root);
+    else
     {
-        tinyxml2::XMLElement* pid = element->FirstChildElement("pid");
-        long thisPID = strtol(pid->GetText(), NULL, 16);
+        tinyxml2::XMLElement* element = nullptr;
 
-        AccessUnit *pAU = nullptr;
+        element = root->FirstChildElement("packet");
 
-        if(m_currentVideoAU.esd.pid == thisPID)
-            pAU = &m_currentVideoAU;
-        else if(m_currentAudioAU.esd.pid == thisPID)
-            pAU = &m_currentAudioAU;
+        long lastPID = -1;
 
-        if(pAU)
+        unsigned int videoFrameNumber = 0;
+        unsigned int audioFrameNumber = 0;
+
+        while(element)
         {
-            tinyxml2::XMLElement* pusi = element->FirstChildElement("payload_unit_start_indicator");
+            tinyxml2::XMLElement* pid = element->FirstChildElement("pid");
+            long thisPID = strtol(pid->GetText(), NULL, 16);
 
-            bool bNewAUSet = false;
+            AccessUnit *pAU = nullptr;
 
-            if(1 == strtol(pusi->GetText(), NULL, 16))
+            if(m_currentVideoAU.esd.pid == thisPID)
+                pAU = &m_currentVideoAU;
+            else if(m_currentAudioAU.esd.pid == thisPID)
+                pAU = &m_currentAudioAU;
+
+            if(pAU)
             {
-                if(pAU->accessUnitElements.size())
+                tinyxml2::XMLElement* pusi = element->FirstChildElement("payload_unit_start_indicator");
+
+                bool bNewAUSet = false;
+
+                if(1 == strtol(pusi->GetText(), NULL, 16))
                 {
-                    if(pAU == &m_currentVideoAU)
+                    if(pAU->accessUnitElements.size())
                     {
-                        m_currentVideoAU.frameNumber = videoFrameNumber++;
-                        m_videoAccessUnits.push_back(m_currentVideoAU);
+                        if(pAU == &m_currentVideoAU)
+                        {
+                            m_currentVideoAU.frameNumber = videoFrameNumber++;
+                            m_videoAccessUnitsDecode.push_back(m_currentVideoAU);
+                        }
+                        else if(pAU == &m_currentAudioAU)
+                        {
+                            m_currentVideoAU.frameNumber = audioFrameNumber++;
+                            m_audioAccessUnits.push_back(m_currentAudioAU);
+                        }
                     }
-                    else if(pAU == &m_currentAudioAU)
-                    {
-                        m_currentVideoAU.frameNumber = audioFrameNumber++;
-                        m_audioAccessUnits.push_back(m_currentAudioAU);
-                    }
+
+                    pAU->accessUnitElements.clear();
+                    bNewAUSet = true;
                 }
 
-                pAU->accessUnitElements.clear();
-                bNewAUSet = true;
+                if(-1 != lastPID && thisPID != lastPID)
+                    bNewAUSet = true;
+
+                if(bNewAUSet)
+                {
+                    const tinyxml2::XMLAttribute *attribute = element->FirstAttribute();
+
+                    AccessUnitElement aue;
+                    aue.startByteLocation = attribute->IntValue();
+                    aue.numPackets = 1;
+
+                    pAU->accessUnitElements.push_back(aue);
+                }
+                else
+                {
+                    AccessUnitElement &aue = pAU->accessUnitElements.back();
+                    aue.numPackets++;
+                }
+
+                lastPID = thisPID;
             }
 
-            if(-1 != lastPID && thisPID != lastPID)
-                bNewAUSet = true;
+            element = element->NextSiblingElement("packet");
+        }
 
-            if(bNewAUSet)
+        if(m_currentVideoAU.accessUnitElements.size())
+        {
+            m_videoAccessUnitsDecode.push_back(m_currentVideoAU);
+            m_currentVideoAU.accessUnitElements.clear();
+        }
+        
+        if(m_currentAudioAU.accessUnitElements.size())
+        {
+            m_audioAccessUnits.push_back(m_currentAudioAU);
+            m_currentAudioAU.accessUnitElements.clear();
+        }
+
+        ret = true;
+    }
+
+    uint32_t frameNumber = 0;
+
+    if(ret && m_videoAccessUnitsDecode.size())
+    {
+        AccessUnit *referenceFrame = NULL;
+
+        for(std::vector<AccessUnit>::iterator iter = m_videoAccessUnitsDecode.begin(); iter < m_videoAccessUnitsDecode.end(); iter++)
+        {
+            if(iter->frameType == "I" ||
+               iter->frameType == "P")
             {
-                const tinyxml2::XMLAttribute *attribute = element->FirstAttribute();
+                if(referenceFrame)
+                    AddPresentationUnit(*referenceFrame, frameNumber++);
 
-                AccessUnitElement aue;
-                aue.startByteLocation = attribute->IntValue();
-                aue.numPackets = 1;
-
-                pAU->accessUnitElements.push_back(aue);
+                referenceFrame = &(*iter);
             }
             else
             {
-                AccessUnitElement &aue = pAU->accessUnitElements.back();
-                aue.numPackets++;
+                AddPresentationUnit(*iter, frameNumber++);
             }
-
-            lastPID = thisPID;
         }
 
-        element = element->NextSiblingElement("packet");
+        AddPresentationUnit(*referenceFrame, frameNumber++);
     }
 
-    if(m_currentVideoAU.accessUnitElements.size())
-    {
-        m_videoAccessUnits.push_back(m_currentVideoAU);
-        m_currentVideoAU.accessUnitElements.clear();
-    }
-        
-    if(m_currentAudioAU.accessUnitElements.size())
-    {
-        m_audioAccessUnits.push_back(m_currentAudioAU);
-        m_currentAudioAU.accessUnitElements.clear();
-    }
+    return ret;
+}
 
-    return true;
+inline void MpegTS_XML::AddPresentationUnit(AccessUnit au, uint32_t frameNumber)
+{
+    au.frameNumber = frameNumber;
+    m_videoAccessUnitsPresentation.push_back(au);
 }

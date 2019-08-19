@@ -515,7 +515,7 @@ static bool RunGUI(MpegTS_XML &mpts)
     int frame_num = 0;
     bool bNeedFrame = false;
 
-    size_t frameDisplaying = 0;
+    int frameDisplaying = 0;
     size_t framesToDecode = 0;
     size_t framesDecoded = 0;
 
@@ -526,8 +526,8 @@ static bool RunGUI(MpegTS_XML &mpts)
     float blue = 154.f;
     float blueInc = 7.f;
 
-    size_t numVideoFrames = mpts.m_videoAccessUnits.size();
-    size_t bytePosOfLastAU = BytePosOfLastAU(mpts.m_videoAccessUnits);
+    size_t numVideoFrames = mpts.m_videoAccessUnitsPresentation.size();
+    size_t bytePosOfLastAU = BytePosOfLastAU(mpts.m_videoAccessUnitsPresentation);
 
     Renderer renderer;
 
@@ -612,7 +612,7 @@ static bool RunGUI(MpegTS_XML &mpts)
 
         if(lastFileBytePos != fileBytePos)
         {
-            seekFrameNumber =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnits);
+            seekFrameNumber =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnitsPresentation);
             lastFileBytePos = fileBytePos;
         }
 
@@ -691,7 +691,7 @@ static bool RunGUI(MpegTS_XML &mpts)
                         bNeedFrame = false;
 
                     float percent = ((float) frameDisplaying / (float)numVideoFrames) *100.f;
-                    seekValue = percent;
+                    seekValue = (int) percent;
                     seekValueLast = seekValue;
                     bNewFrame = true;
                 }
@@ -710,23 +710,23 @@ static bool RunGUI(MpegTS_XML &mpts)
 //        else
 //            frame = seekFrameNumber;
 
-        int high = frame + 30;
+        size_t high = frame + 30;
 
         high = MIN(high, numVideoFrames);
 
-        if(mpts.m_videoAccessUnits.size())
+        if(mpts.m_videoAccessUnitsPresentation.size())
         {
-            if (ImGui::CollapsingHeader(mpts.m_videoAccessUnits[0].esd.name.c_str()))
+            if (ImGui::CollapsingHeader(mpts.m_videoAccessUnitsPresentation[0].esd.name.c_str()))
             {
                 for(int i = frame; i < high; i++)
                 {
-                    AccessUnit &au = mpts.m_videoAccessUnits[i];
+                    AccessUnit &au = mpts.m_videoAccessUnitsPresentation[i];
 
                     size_t numPackets = 0;
                     for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
                         numPackets += j->numPackets;
 
-                    if(ImGui::TreeNode((void*) au.frameNumber, "Frame:%u, Type:%s, Packets:%llu, PID:%ld", au.frameNumber, au.frameType.c_str(), numPackets, au.esd.pid))
+                    if(ImGui::TreeNode((void*) au.frameNumber, "Frame:%u, Type:%s, PTS:%ld, Packets:%llu, PID:%ld", au.frameNumber, au.frameType.c_str(), au.pts, numPackets, au.esd.pid))
                     {
                         if (ImGui::SmallButton("View"))
                         {
@@ -892,10 +892,7 @@ int main(int argc, char* argv[])
     mpts.ParseMpegTSDescriptor(root);
 
     // Build current access units
-    if(mpts.m_mpegTSDescriptor.terse)
-        mpts.ParsePacketListTerse(root);
-    else
-        mpts.ParsePacketList(root);
+    mpts.ParsePacketList(root);
 
     if(0 != OpenInputFile(mpts))
         return 1;

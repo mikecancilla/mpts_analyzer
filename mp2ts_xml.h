@@ -128,6 +128,8 @@ struct AccessUnit
     AccessUnit()
         : frameNumber(0)
         , frameType("")
+        , pts(0)
+        , pts_seconds(0.f)
     {
     }
 
@@ -135,11 +137,15 @@ struct AccessUnit
         : esd(name, type, pid)
         , frameNumber(0)
         , frameType("")
+        , pts(0)
+        , pts_seconds(0.f)
     {
     }
 
     unsigned int frameNumber;
     std::string frameType;
+    uint64_t pts;
+    float pts_seconds;
 };
 
 struct MpegTSDescriptor
@@ -173,10 +179,12 @@ public:
     bool ParseMpegTSDescriptor(tinyxml2::XMLElement* root);
     bool ParsePacketList(tinyxml2::XMLElement* root);
     bool ParsePacketListTerse(tinyxml2::XMLElement* root);
+    //bool Reorder
 
 public:
     MpegTSDescriptor            m_mpegTSDescriptor;
-    std::vector<AccessUnit>     m_videoAccessUnits;
+    std::vector<AccessUnit>     m_videoAccessUnitsDecode;
+    std::vector<AccessUnit>     m_videoAccessUnitsPresentation;
     std::vector<AccessUnit>     m_audioAccessUnits;
     int                         m_videoStreamIndex;
     int                         m_audioStreamIndex;
@@ -187,4 +195,6 @@ private:
     AccessUnit                  m_currentVideoAU;
     AccessUnit                  m_currentAudioAU;
     //std::vector<ElementaryStream> gElementaryStreams;
+
+    inline void AddPresentationUnit(AccessUnit au, uint32_t frameNumber);
 };
