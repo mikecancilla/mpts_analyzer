@@ -608,35 +608,6 @@ static bool RunGUI(MpegTS_XML &mpts)
         size_t fileBytePos = (size_t) ((float) bytePosOfLastAU * ((float) seekValue / 100.f));
 
         static size_t lastFileBytePos = 0;
-        static int seekFrameNumber = 0;
-
-        if(lastFileBytePos != fileBytePos)
-        {
-            seekFrameNumber =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnitsPresentation);
-            lastFileBytePos = fileBytePos;
-        }
-
-        char frameType = ' ';
-
-        if(g_pFrame)
-        {
-            switch(g_pFrame->pict_type)
-            {
-                case AV_PICTURE_TYPE_I:
-                    frameType = 'I';
-                break;
-                case AV_PICTURE_TYPE_P:
-                    frameType = 'P';
-                break;
-                case AV_PICTURE_TYPE_B:
-                    frameType = 'B';
-                break;
-            }
-        }
-
-        ImGui::Text("Displaying:%d of %d, Type:%c, Seek Frame:%d, Seek Byte:%llu", frameDisplaying, numVideoFrames, frameType, seekFrameNumber, (int64_t) fileBytePos);
-
-        ImGui::End(); // Seek
 
         if(seekValueLast != seekValue ||
            bForceSeek)
@@ -644,28 +615,47 @@ static bool RunGUI(MpegTS_XML &mpts)
             g_playState = eStopped;
             seekValueLast = seekValue;
 
-            uint64_t seekBytes = (uint64_t) fileBytePos;
+            frameDisplaying =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnitsPresentation);
+            lastFileBytePos = fileBytePos;
 
             avformat_flush(g_ifmt_ctx);
             avio_flush(g_ifmt_ctx->pb);
-            avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, seekBytes, seekBytes, seekBytes, AVSEEK_FLAG_BYTE);
+            avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, fileBytePos, fileBytePos, fileBytePos, AVSEEK_FLAG_BYTE);
+
+            /* Timestamp based testing with cars_2_toy_story
+            size_t lastTimestamp = 33495336;
+            size_t timeStampPos = (size_t) ((float) lastTimestamp * ((float) seekValue / 100.f));
+            av_seek_frame(g_ifmt_ctx, mpts.m_videoStreamIndex, timeStampPos, 0);
+            */
 
             if(g_pFrame)
                 av_frame_free(&g_pFrame);
 
             g_pFrame = GetNextVideoFrame();
 
+            printf("----------\n");
+
             while(g_pFrame && AV_PICTURE_TYPE_I != g_pFrame->pict_type)
             {
+                switch(g_pFrame->pict_type)
+                {
+                    case AV_PICTURE_TYPE_P:
+                        printf("%d: P Frame\n", frameDisplaying);
+                    break;
+
+                    case AV_PICTURE_TYPE_B:
+                        printf("%d: B Frame\n", frameDisplaying);
+                    break;
+                }
+
+                frameDisplaying++;
+
                 av_frame_free(&g_pFrame);
                 g_pFrame = GetNextVideoFrame();
-                bNewFrame = true;
             }
 
-            if(g_pFrame)
-                frameDisplaying = seekFrameNumber;
-
             bNeedFrame = false;
+            bNewFrame = true;
         }
         else
         {
@@ -701,16 +691,33 @@ static bool RunGUI(MpegTS_XML &mpts)
         if(g_pFrame)
             WriteFrame(g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter, bNewFrame);
 
+        char frameType = ' ';
+
+        if(g_pFrame)
+        {
+            switch(g_pFrame->pict_type)
+            {
+                case AV_PICTURE_TYPE_I:
+                    frameType = 'I';
+                break;
+                case AV_PICTURE_TYPE_P:
+                    frameType = 'P';
+                break;
+                case AV_PICTURE_TYPE_B:
+                    frameType = 'B';
+                break;
+            }
+        }
+
+        ImGui::Text("Displaying:%d of %d, Type:%c, Seek Frame:%d, Seek Byte:%llu", frameDisplaying, numVideoFrames, frameType, frameDisplaying, (int64_t) fileBytePos);
+
+        ImGui::End(); // Seek
+
         ImGui::Begin("Frames");
 
-        int frame = 0;
+        int frame = frameDisplaying;
 
-//        if(ePlaying == g_playState)
-            frame = frameDisplaying;
-//        else
-//            frame = seekFrameNumber;
-
-        size_t high = frame + 30;
+        size_t high = frame + 30; // TODO: Make this GOP size
 
         high = MIN(high, numVideoFrames);
 
@@ -730,46 +737,10 @@ static bool RunGUI(MpegTS_XML &mpts)
                     {
                         if (ImGui::SmallButton("View"))
                         {
-                            if(frame != frameDisplaying)
+                            if(frame > frameDisplaying)
                             {
-                                if(frame < frameDisplaying)
-                                {
-                                    uint64_t seekBytes = (uint64_t) fileBytePos;
-
-                                    avformat_flush(g_ifmt_ctx);
-                                    avio_flush(g_ifmt_ctx->pb);
-                                    avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, seekBytes, seekBytes, seekBytes, AVSEEK_FLAG_BYTE);
-
-                                    if(g_pFrame)
-                                        av_frame_free(&g_pFrame);
-
-                                    g_pFrame = GetNextVideoFrame();
-
-                                    while(g_pFrame && AV_PICTURE_TYPE_I != g_pFrame->pict_type)
-                                    {
-                                        av_frame_free(&g_pFrame);
-                                        g_pFrame = GetNextVideoFrame();
-                                    }
-
-                                    if(frame == seekFrameNumber)
-                                    {
-                                        framesToDecode = 0;
-                                        bNeedFrame = false;
-                                    }
-                                    else
-                                    {
-                                        framesToDecode = frame - seekFrameNumber;
-                                        bNeedFrame = true;
-                                    }
-
-                                    frameDisplaying = seekFrameNumber;
-                                }
-                                else
-                                {
-                                    framesToDecode = frame - frameDisplaying;
-                                    bNeedFrame = true;
-                                }
-
+                                framesToDecode = frame - frameDisplaying;
+                                bNeedFrame = true;
                                 framesDecoded = 0;
                             }
                         };
