@@ -83,6 +83,9 @@ extern int DoFFMpegOpenGLTest(const std::string &inFileName);
 #define WINDOW_WIDTH 1600
 #define WINDOW_HEIGHT 900
 
+#define KEY_RIGHT_ARROW 262
+#define KEY_LEFT_ARROW 263
+
 #define MIN(x,y) ((x) < (y) ? (x) : (y))
 #define MAX(x,y) ((x) > (y) ? (x) : (y))
 
@@ -104,6 +107,8 @@ typedef struct FilteringContext {
     AVFilterContext *buffersrc_ctx;
     AVFilterGraph *filter_graph;
 } FilteringContext;
+
+static FILE *inputFile = NULL;
 
 // Describes the input file
 static AVFormatContext  *g_ifmt_ctx = NULL;
@@ -376,6 +381,183 @@ static bool WriteFrame(AVCodecContext *dec_ctx,
     return true;
 }
 
+static size_t inline increment_ptr(uint8_t *&p, size_t bytes)
+{
+    p += bytes;
+    return bytes;
+}
+
+static inline uint16_t read_2_bytes(uint8_t *p)
+{
+	uint16_t ret = *p++;
+	ret <<= 8;
+	ret |= *p++;
+
+	return ret;
+}
+
+static inline uint32_t read_4_bytes(uint8_t *p)
+{
+    uint32_t ret = 0;
+    uint32_t val = *p++;
+    ret = val<<24;
+    val = *p++;
+    ret |= val << 16;
+    val = *p++;
+    ret |= val << 8;
+    ret |= *p;
+
+    return ret;
+}
+
+uint8_t process_adaptation_field(unsigned int indent, uint8_t *&p)
+{
+    uint8_t adaptation_field_length = *p;
+    return adaptation_field_length;
+}
+
+static int FindData(uint8_t *packet)
+{
+    uint8_t *p = packet;
+
+    if (0x47 != *p)
+    {
+        fprintf(stderr, "Error: Packet does not start with 0x47\n");
+        return -1;
+    }
+
+    // Skip the sync byte 0x47
+    increment_ptr(p, 1);
+
+    uint16_t PID = read_2_bytes(p);
+    increment_ptr(p, 2);
+
+    uint8_t transport_error_indicator = (PID & 0x8000) >> 15;
+    uint8_t payload_unit_start_indicator = (PID & 0x4000) >> 14;
+
+    uint8_t transport_priority = (PID & 0x2000) >> 13;
+
+    PID &= 0x1FFF;
+
+    uint8_t adaptation_field_control = 1;
+
+    // Move beyond the 32 bit header
+    uint8_t final_byte = *p;
+    increment_ptr(p, 1);
+
+    uint8_t transport_scrambling_control = (final_byte & 0xC0) >> 6;
+    adaptation_field_control = (final_byte & 0x30) >> 4;
+    uint8_t continuity_counter = (final_byte & 0x0F) >> 4;
+
+    /*
+        Table 2-5 – Adaptation field control values
+            Value  Description
+             00    Reserved for future use by ISO/IEC
+             01    No adaptation_field, payload only
+             10    Adaptation_field only, no payload
+             11    Adaptation_field followed by payload
+    */
+    uint8_t adaptation_field_length = 0;
+
+    if(2 == adaptation_field_control ||
+       3 == adaptation_field_control)
+    {
+        adaptation_field_length = process_adaptation_field(2, p);
+    }
+
+    return 4 + adaptation_field_length;
+}
+
+uint8_t g_pVideoFrame[500000];
+
+static AVFrame* GetNextVideoFrameInternal(MpegTS_XML &mpts, unsigned int frameNum = 0)
+{
+    AVFrame *pFrame = NULL;
+    uint8_t buffer[192];
+
+    while(1)
+    {
+        unsigned int numBytes = 0;
+
+        for(auto aue : mpts.m_videoAccessUnitsDecode[frameNum++].accessUnitElements)
+        {
+            // Seek to aue.startByteLocation
+            fseek(inputFile, aue.startByteLocation, SEEK_SET);
+
+            for(unsigned int i=0; i<aue.numPackets; i++)
+            {
+                fread(buffer, 188, 1, inputFile);
+
+                uint8_t count = FindData(buffer);
+
+                memcpy(g_pVideoFrame+numBytes, buffer+count, 188-count);
+                numBytes += 188-count;
+            }
+        }
+
+        AVPacket packet;
+
+        memset(&packet, 0, sizeof(packet));
+
+    //    packet.buf->data = g_pFrame;
+    //    packet.buf->size = numBytes;
+        packet.data = g_pVideoFrame;
+        packet.size = numBytes;
+        packet.pts = mpts.m_videoAccessUnitsDecode[frameNum].pts;
+        packet.pos = mpts.m_videoAccessUnitsDecode[frameNum].accessUnitElements[0].startByteLocation;
+
+
+        int streamIndex = packet.stream_index;
+
+        //If the packet is from the video stream
+        if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
+        {
+            // Send a packet to the decoder
+            int ret = avcodec_send_packet(g_stream_ctx[streamIndex].dec_ctx, &packet);
+
+            // Unref the packet
+            av_packet_unref(&packet);
+
+            if (ret < 0)
+            {
+                av_log(NULL, AV_LOG_ERROR, "Error while sending a packet to the decoder\n");
+                break;
+            }
+
+            pFrame = av_frame_alloc();
+
+            if (!pFrame)
+            {
+                av_log(NULL, AV_LOG_ERROR, "Decode thread could not allocate frame\n");
+                ret = AVERROR(ENOMEM);
+                break;
+            }
+
+            // Get a frame from the decoder
+            ret = avcodec_receive_frame(g_stream_ctx[streamIndex].dec_ctx, pFrame);
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            {
+                av_frame_free(&pFrame);
+                continue;
+            }
+            else if (ret < 0)
+            {
+                av_log(NULL, AV_LOG_ERROR, "Error while receiving a frame from the decoder\n");
+                av_frame_free(&pFrame);
+                break;
+            }
+
+            if (ret >= 0)
+                break;
+        }
+    }
+
+    if(pFrame)
+        FlipAvFrame(pFrame);
+
+    return pFrame;
+}
+
 static AVFrame* GetNextVideoFrame()
 {
     AVPacket packet;
@@ -545,9 +727,10 @@ static bool RunGUI(MpegTS_XML &mpts)
 
     Renderer renderer;
 
-    avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
+    //avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
+    //g_pFrame = GetNextVideoFrame();
 
-    g_pFrame = GetNextVideoFrame();
+    g_pFrame = GetNextVideoFrameInternal(mpts);
 
     if(!g_pFrame)
     {
@@ -598,7 +781,7 @@ static bool RunGUI(MpegTS_XML &mpts)
         }
 
         // Right Arrow Key
-        if (ImGui::IsKeyPressed(262))
+        if (ImGui::IsKeyPressed(KEY_RIGHT_ARROW))
         {
             g_playState = eStopped;
             bNeedFrame = true;
@@ -609,7 +792,7 @@ static bool RunGUI(MpegTS_XML &mpts)
         bool bForceSeek = false;
 
         // Left Arrow Key
-        if (ImGui::IsKeyPressed(263))
+        if (ImGui::IsKeyPressed(KEY_LEFT_ARROW))
         {
             seekValue--;
             seekValue = MAX(0, seekValue);
@@ -634,7 +817,7 @@ static bool RunGUI(MpegTS_XML &mpts)
 
             avformat_flush(g_ifmt_ctx);
             avio_flush(g_ifmt_ctx->pb);
-            avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, fileBytePos, fileBytePos, fileBytePos, AVSEEK_FLAG_BYTE);
+            //avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, fileBytePos, fileBytePos, fileBytePos, AVSEEK_FLAG_BYTE);
 
             /* Timestamp based testing with cars_2_toy_story
             size_t lastTimestamp = 33495336;
@@ -645,7 +828,8 @@ static bool RunGUI(MpegTS_XML &mpts)
             if(g_pFrame)
                 av_frame_free(&g_pFrame);
 
-            g_pFrame = GetNextVideoFrame();
+            //g_pFrame = GetNextVideoFrame();
+            g_pFrame = GetNextVideoFrameInternal(mpts, frameDisplaying);
 
             printf("----------\n");
 
@@ -665,7 +849,8 @@ static bool RunGUI(MpegTS_XML &mpts)
                 frameDisplaying++;
 
                 av_frame_free(&g_pFrame);
-                g_pFrame = GetNextVideoFrame();
+                //g_pFrame = GetNextVideoFrame();
+                g_pFrame = GetNextVideoFrameInternal(mpts, frameDisplaying);
             }
 
             bNeedFrame = false;
@@ -679,7 +864,8 @@ static bool RunGUI(MpegTS_XML &mpts)
                 if(g_pFrame)
                     av_frame_free(&g_pFrame);
 
-                g_pFrame = GetNextVideoFrame();
+                //g_pFrame = GetNextVideoFrame();
+                g_pFrame = GetNextVideoFrameInternal(mpts, frameDisplaying);
 
                 if (g_pFrame)
                 {
@@ -1558,6 +1744,8 @@ int main(int argc, char* argv[])
     if(0 != OpenInputFile(mpts))
         return 1;
 
+    inputFile = fopen(mpts.m_mpegTSDescriptor.fileName.c_str(), "rb");
+
     if(0 != InitFilters())
         return 1;
 
@@ -1565,6 +1753,7 @@ int main(int argc, char* argv[])
     if(RunGUI(mpts))
     {
         CloseInputFile(mpts);
+        fclose(inputFile);
         return 0;
     }
 
