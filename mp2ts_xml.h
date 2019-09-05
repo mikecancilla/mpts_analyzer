@@ -82,8 +82,8 @@ enum eFrameType
 
 struct AccessUnitElement
 {
-    int64_t startByteLocation;
-    int64_t numPackets;
+    uint64_t startByteLocation;
+    uint64_t numPackets;
 
     AccessUnitElement()
         : startByteLocation(-1)

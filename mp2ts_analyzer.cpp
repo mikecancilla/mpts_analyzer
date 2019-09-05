@@ -468,18 +468,59 @@ static int FindData(uint8_t *packet)
     return 4 + adaptation_field_length;
 }
 
-uint8_t g_pVideoFrame[500000];
+static unsigned int FrameNumberFromBytePos(uint64_t &bytePos, std::vector<AccessUnit> &accessUnitList)
+{
+    // If searching for beginning of file, just return 0
+    if(0 == bytePos)
+        return 0;
 
-static AVFrame* GetNextVideoFrameInternal(MpegTS_XML &mpts, unsigned int frameNum = 0)
+    // Look for bytePos in the list of AUs
+    for(std::vector<AccessUnit>::iterator i = accessUnitList.begin(); i < accessUnitList.end(); i++)
+    {
+        if(i->accessUnitElements[0].startByteLocation >= bytePos)
+        {
+            bytePos = i->accessUnitElements[0].startByteLocation;
+            return i->frameNumber;
+        }
+    }
+
+    // Didn't fine one? Return the frame number of the last AU
+    return accessUnitList.back().frameNumber;
+}
+
+static unsigned int FrameNumberFromBytePosInternal(uint64_t &bytePos, std::vector<AccessUnit> &accessUnitList)
+{
+    // If searching for beginning of file, just return 0
+    if(0 == bytePos)
+        return 0;
+
+    // Look for bytePos in the list of AUs
+    for(std::vector<AccessUnit>::iterator i = accessUnitList.begin(); i < accessUnitList.end(); i++)
+    {
+        if(i->accessUnitElements[0].startByteLocation >= bytePos && i->frameType == "I")
+        {
+            bytePos = i->accessUnitElements[0].startByteLocation;
+            return i->frameNumber;
+        }
+    }
+
+    // Didn't fine one? Return the frame number of the last AU
+    return accessUnitList.back().frameNumber;
+}
+
+uint8_t g_pVideoData[500000];
+
+static AVFrame* GetNextVideoFrameInternal(MpegTS_XML &mpts, uint64_t &bytePos, unsigned int frameToDecode)
 {
     AVFrame *pFrame = NULL;
     uint8_t buffer[192];
+    unsigned int currentFrame = frameToDecode;
 
     while(1)
     {
         unsigned int numBytes = 0;
 
-        for(auto aue : mpts.m_videoAccessUnitsDecode[frameNum++].accessUnitElements)
+        for(auto aue : mpts.m_videoAccessUnitsDecode[currentFrame].accessUnitElements)
         {
             // Seek to aue.startByteLocation
             fseek(inputFile, aue.startByteLocation, SEEK_SET);
@@ -490,7 +531,7 @@ static AVFrame* GetNextVideoFrameInternal(MpegTS_XML &mpts, unsigned int frameNu
 
                 uint8_t count = FindData(buffer);
 
-                memcpy(g_pVideoFrame+numBytes, buffer+count, 188-count);
+                memcpy(g_pVideoData+numBytes, buffer+count, 188-count);
                 numBytes += 188-count;
             }
         }
@@ -499,13 +540,15 @@ static AVFrame* GetNextVideoFrameInternal(MpegTS_XML &mpts, unsigned int frameNu
 
         memset(&packet, 0, sizeof(packet));
 
-    //    packet.buf->data = g_pFrame;
-    //    packet.buf->size = numBytes;
-        packet.data = g_pVideoFrame;
-        packet.size = numBytes;
-        packet.pts = mpts.m_videoAccessUnitsDecode[frameNum].pts;
-        packet.pos = mpts.m_videoAccessUnitsDecode[frameNum].accessUnitElements[0].startByteLocation;
+        packet.buf = av_buffer_alloc(numBytes);
+        memcpy(packet.buf->data, g_pVideoData, numBytes);
 
+        packet.data = packet.buf->data;
+        packet.size = packet.buf->size;
+        packet.pts = mpts.m_videoAccessUnitsDecode[currentFrame].pts;
+        packet.pos = mpts.m_videoAccessUnitsDecode[currentFrame].accessUnitElements[0].startByteLocation;
+
+        currentFrame++;
 
         int streamIndex = packet.stream_index;
 
@@ -669,21 +712,6 @@ static int64_t BytePosOfLastAU(std::vector<AccessUnit> &accessUnitList)
     return lastAccessUnit.accessUnitElements[0].startByteLocation;
 }
 
-static int FrameNumberFromBytePos(int64_t bytePos, std::vector<AccessUnit> &accessUnitList)
-{
-    if(0 == bytePos)
-        return 0;
-
-    for(std::vector<AccessUnit>::iterator i = accessUnitList.begin(); i < accessUnitList.end(); i++)
-    {
-        if(i->accessUnitElements[0].startByteLocation >= bytePos)
-            return i->frameNumber;
-    }
-
-    AccessUnit lastAccessUnit = accessUnitList.back();
-    return lastAccessUnit.frameNumber;
-}
-
 static bool RunGUI(MpegTS_XML &mpts)
 {
     static PlayState g_playState = eStopped;
@@ -711,7 +739,8 @@ static bool RunGUI(MpegTS_XML &mpts)
     int frame_num = 0;
     bool bNeedFrame = false;
 
-    int frameDisplaying = 0;
+    unsigned int frameDisplaying = 0;
+    uint64_t fileBytePos = 0;
     size_t framesToDecode = 0;
     size_t framesDecoded = 0;
 
@@ -722,7 +751,7 @@ static bool RunGUI(MpegTS_XML &mpts)
     float blue = 154.f;
     float blueInc = 7.f;
 
-    size_t numVideoFrames = mpts.m_videoAccessUnitsPresentation.size();
+    unsigned int numVideoFrames = mpts.m_videoAccessUnitsPresentation.size();
     size_t bytePosOfLastAU = BytePosOfLastAU(mpts.m_videoAccessUnitsPresentation);
 
     Renderer renderer;
@@ -730,7 +759,8 @@ static bool RunGUI(MpegTS_XML &mpts)
     //avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
     //g_pFrame = GetNextVideoFrame();
 
-    g_pFrame = GetNextVideoFrameInternal(mpts);
+    //fseek(inputFile, 0, SEEK_SET);
+    g_pFrame = GetNextVideoFrameInternal(mpts, fileBytePos, frameDisplaying);
 
     if(!g_pFrame)
     {
@@ -802,7 +832,7 @@ static bool RunGUI(MpegTS_XML &mpts)
                 bForceSeek = true;
         }
 
-        size_t fileBytePos = (size_t) ((float) bytePosOfLastAU * ((float) seekValue / 100.f));
+        fileBytePos = (uint64_t) ((float) bytePosOfLastAU * ((float) seekValue / 100.f));
 
         static size_t lastFileBytePos = 0;
 
@@ -812,7 +842,7 @@ static bool RunGUI(MpegTS_XML &mpts)
             g_playState = eStopped;
             seekValueLast = seekValue;
 
-            frameDisplaying =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnitsPresentation);
+//            frameDisplaying =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnitsPresentation);
             lastFileBytePos = fileBytePos;
 
             avformat_flush(g_ifmt_ctx);
@@ -829,7 +859,9 @@ static bool RunGUI(MpegTS_XML &mpts)
                 av_frame_free(&g_pFrame);
 
             //g_pFrame = GetNextVideoFrame();
-            g_pFrame = GetNextVideoFrameInternal(mpts, frameDisplaying);
+
+            frameDisplaying = FrameNumberFromBytePosInternal(fileBytePos, mpts.m_videoAccessUnitsPresentation);
+            g_pFrame = GetNextVideoFrameInternal(mpts, fileBytePos, frameDisplaying);
 
             printf("----------\n");
 
@@ -850,7 +882,7 @@ static bool RunGUI(MpegTS_XML &mpts)
 
                 av_frame_free(&g_pFrame);
                 //g_pFrame = GetNextVideoFrame();
-                g_pFrame = GetNextVideoFrameInternal(mpts, frameDisplaying);
+                g_pFrame = GetNextVideoFrameInternal(mpts, fileBytePos, frameDisplaying);
             }
 
             bNeedFrame = false;
@@ -865,7 +897,7 @@ static bool RunGUI(MpegTS_XML &mpts)
                     av_frame_free(&g_pFrame);
 
                 //g_pFrame = GetNextVideoFrame();
-                g_pFrame = GetNextVideoFrameInternal(mpts, frameDisplaying);
+                g_pFrame = GetNextVideoFrameInternal(mpts, fileBytePos, frameDisplaying+1);
 
                 if (g_pFrame)
                 {
@@ -915,9 +947,9 @@ static bool RunGUI(MpegTS_XML &mpts)
 
         ImGui::Begin("Frames");
 
-        int frame = frameDisplaying;
+        unsigned int frame = frameDisplaying;
 
-        size_t high = frame + 30; // TODO: Make this GOP size
+        unsigned int high = frame + 30; // TODO: Make this GOP size
 
         high = MIN(high, numVideoFrames);
 
@@ -925,7 +957,7 @@ static bool RunGUI(MpegTS_XML &mpts)
         {
             if (ImGui::CollapsingHeader(mpts.m_videoAccessUnitsPresentation[0].esd.name.c_str()))
             {
-                for(int i = frame; i < high; i++)
+                for(unsigned int i = frame; i < high; i++)
                 {
                     AccessUnit &au = mpts.m_videoAccessUnitsPresentation[i];
 
