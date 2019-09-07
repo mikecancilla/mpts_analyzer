@@ -144,6 +144,8 @@ struct AccessUnit
 
     unsigned int frameNumber;
     std::string frameType;
+    uint64_t dts;
+    float dts_seconds;
     uint64_t pts;
     float pts_seconds;
 };

@@ -108,6 +108,7 @@ typedef struct FilteringContext {
     AVFilterGraph *filter_graph;
 } FilteringContext;
 
+static FILE *g_fpTemp = NULL;
 static FILE *inputFile = NULL;
 
 // Describes the input file
@@ -151,7 +152,7 @@ static int OpenInputFile(MpegTS_XML &mpts)
     g_ifmt_ctx = NULL;
     std::string inFileName = mpts.m_mpegTSDescriptor.fileName;
 
-    av_log_set_level(AV_LOG_QUIET);
+    av_log_set_level(AV_LOG_VERBOSE);
 
     if ((ret = avformat_open_input(&g_ifmt_ctx, inFileName.c_str(), NULL, NULL)) < 0)
     {
@@ -236,6 +237,9 @@ static int OpenInputFile(MpegTS_XML &mpts)
     g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx = codec_ctx;
 
     av_dump_format(g_ifmt_ctx, 0, inFileName.c_str(), 0);
+
+    g_fpTemp = fopen("C:\\temp.mpg", "wb");
+
     return 0;
 }
 
@@ -248,6 +252,9 @@ static int CloseInputFile(MpegTS_XML &mpts)
     }
 
     avformat_close_input(&g_ifmt_ctx);
+
+    if(g_fpTemp)
+        fclose(g_fpTemp);
 
     return 0;
 }
@@ -413,7 +420,7 @@ static inline uint32_t read_4_bytes(uint8_t *p)
 uint8_t process_adaptation_field(unsigned int indent, uint8_t *&p)
 {
     uint8_t adaptation_field_length = *p;
-    return adaptation_field_length;
+    return adaptation_field_length+1;
 }
 
 static int FindData(uint8_t *packet)
@@ -510,14 +517,59 @@ static unsigned int FrameNumberFromBytePosInternal(uint64_t &bytePos, std::vecto
 
 uint8_t g_pVideoData[500000];
 
-static AVFrame* GetNextVideoFrameInternal(MpegTS_XML &mpts, uint64_t &bytePos, unsigned int frameToDecode)
+static void WriteAllFramesToFile(MpegTS_XML &mpts)
+{
+    uint8_t buffer[192];
+
+    for(unsigned int f=0; f<mpts.m_videoAccessUnitsDecode.size(); f++ )
+    {
+        for(auto aue : mpts.m_videoAccessUnitsDecode[f].accessUnitElements)
+        {
+            // Seek to aue.startByteLocation
+            fseek(inputFile, aue.startByteLocation, SEEK_SET);
+
+            for(unsigned int i=0; i<aue.numPackets; i++)
+            {
+                fread(buffer, 188, 1, inputFile);
+
+                uint8_t count = FindData(buffer);
+
+                fwrite(buffer+count, 188-count, 1, g_fpTemp);
+            }
+        }
+    }
+}
+
+static void FlushDecoder()
+{
+    int ret = avcodec_send_packet(g_stream_ctx[0].dec_ctx, NULL);
+
+    while (ret >= 0) {
+        AVFrame *frame = av_frame_alloc();
+        ret = avcodec_receive_frame(g_stream_ctx[0].dec_ctx, frame);
+        av_frame_free(&frame);
+    }
+
+    //avformat_flush(g_ifmt_ctx);
+    //avio_flush(g_ifmt_ctx->pb);
+    avcodec_flush_buffers(g_stream_ctx[0].dec_ctx);
+}
+
+static AVFrame* GetNextVideoFrameInternal(MpegTS_XML &mpts, uint64_t &bytePos, int seekFrame = -1)
 {
     AVFrame *pFrame = NULL;
     uint8_t buffer[192];
-    unsigned int currentFrame = frameToDecode;
+
+    static int currentFrame = 0;
+
+    if(-1 != seekFrame)
+        currentFrame = seekFrame;
 
     while(1)
     {
+        if(currentFrame > mpts.m_videoAccessUnitsDecode.size()-1)
+            return NULL;
+
         unsigned int numBytes = 0;
 
         for(auto aue : mpts.m_videoAccessUnitsDecode[currentFrame].accessUnitElements)
@@ -532,19 +584,25 @@ static AVFrame* GetNextVideoFrameInternal(MpegTS_XML &mpts, uint64_t &bytePos, u
                 uint8_t count = FindData(buffer);
 
                 memcpy(g_pVideoData+numBytes, buffer+count, 188-count);
+
                 numBytes += 188-count;
             }
         }
 
         AVPacket packet;
+        av_init_packet(&packet);
+        
+        if(mpts.m_videoAccessUnitsDecode[currentFrame].frameType == "I")
+            packet.flags = AV_PKT_FLAG_KEY;
 
-        memset(&packet, 0, sizeof(packet));
+        //memset(&packet, 0, sizeof(packet));
 
         packet.buf = av_buffer_alloc(numBytes);
         memcpy(packet.buf->data, g_pVideoData, numBytes);
 
         packet.data = packet.buf->data;
         packet.size = packet.buf->size;
+        packet.dts = mpts.m_videoAccessUnitsDecode[currentFrame].dts;
         packet.pts = mpts.m_videoAccessUnitsDecode[currentFrame].pts;
         packet.pos = mpts.m_videoAccessUnitsDecode[currentFrame].accessUnitElements[0].startByteLocation;
 
@@ -553,7 +611,7 @@ static AVFrame* GetNextVideoFrameInternal(MpegTS_XML &mpts, uint64_t &bytePos, u
         int streamIndex = packet.stream_index;
 
         //If the packet is from the video stream
-        if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
+        //if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
         {
             // Send a packet to the decoder
             int ret = avcodec_send_packet(g_stream_ctx[streamIndex].dec_ctx, &packet);
@@ -751,16 +809,21 @@ static bool RunGUI(MpegTS_XML &mpts)
     float blue = 154.f;
     float blueInc = 7.f;
 
-    unsigned int numVideoFrames = mpts.m_videoAccessUnitsPresentation.size();
+    unsigned int numVideoFrames = mpts.m_videoAccessUnitsPresentation.size()-1;
     size_t bytePosOfLastAU = BytePosOfLastAU(mpts.m_videoAccessUnitsPresentation);
 
     Renderer renderer;
 
-    //avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
-    //g_pFrame = GetNextVideoFrame();
+    //WriteAllFramesToFile(mpts);
+    //return true;
 
-    //fseek(inputFile, 0, SEEK_SET);
-    g_pFrame = GetNextVideoFrameInternal(mpts, fileBytePos, frameDisplaying);
+#define FFMPEG_DEMUX 0
+#if FFMPEG_DEMUX
+    avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
+    g_pFrame = GetNextVideoFrame();
+#else
+    g_pFrame = GetNextVideoFrameInternal(mpts, fileBytePos);
+#endif
 
     if(!g_pFrame)
     {
@@ -841,13 +904,10 @@ static bool RunGUI(MpegTS_XML &mpts)
         {
             g_playState = eStopped;
             seekValueLast = seekValue;
-
-//            frameDisplaying =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnitsPresentation);
             lastFileBytePos = fileBytePos;
 
-            avformat_flush(g_ifmt_ctx);
-            avio_flush(g_ifmt_ctx->pb);
-            //avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, fileBytePos, fileBytePos, fileBytePos, AVSEEK_FLAG_BYTE);
+            //avformat_flush(g_ifmt_ctx);
+            //avio_flush(g_ifmt_ctx->pb);
 
             /* Timestamp based testing with cars_2_toy_story
             size_t lastTimestamp = 33495336;
@@ -858,10 +918,16 @@ static bool RunGUI(MpegTS_XML &mpts)
             if(g_pFrame)
                 av_frame_free(&g_pFrame);
 
-            //g_pFrame = GetNextVideoFrame();
-
-            frameDisplaying = FrameNumberFromBytePosInternal(fileBytePos, mpts.m_videoAccessUnitsPresentation);
+#if FFMPEG_DEMUX
+            frameDisplaying =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnitsPresentation);
+            avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, fileBytePos, fileBytePos, fileBytePos, AVSEEK_FLAG_BYTE);
+            g_pFrame = GetNextVideoFrame();
+#else
+            FlushDecoder();
+            //frameDisplaying = FrameNumberFromBytePosInternal(fileBytePos, mpts.m_videoAccessUnitsPresentation);
+            frameDisplaying = FrameNumberFromBytePosInternal(fileBytePos, mpts.m_videoAccessUnitsDecode);
             g_pFrame = GetNextVideoFrameInternal(mpts, fileBytePos, frameDisplaying);
+#endif
 
             printf("----------\n");
 
@@ -881,8 +947,12 @@ static bool RunGUI(MpegTS_XML &mpts)
                 frameDisplaying++;
 
                 av_frame_free(&g_pFrame);
-                //g_pFrame = GetNextVideoFrame();
-                g_pFrame = GetNextVideoFrameInternal(mpts, fileBytePos, frameDisplaying);
+
+#if FFMPEG_DEMUX
+                g_pFrame = GetNextVideoFrame();
+#else
+                g_pFrame = GetNextVideoFrameInternal(mpts, fileBytePos);
+#endif
             }
 
             bNeedFrame = false;
@@ -896,8 +966,11 @@ static bool RunGUI(MpegTS_XML &mpts)
                 if(g_pFrame)
                     av_frame_free(&g_pFrame);
 
-                //g_pFrame = GetNextVideoFrame();
-                g_pFrame = GetNextVideoFrameInternal(mpts, fileBytePos, frameDisplaying+1);
+#if FFMPEG_DEMUX
+                g_pFrame = GetNextVideoFrame();
+#else
+                g_pFrame = GetNextVideoFrameInternal(mpts, fileBytePos);
+#endif
 
                 if (g_pFrame)
                 {
@@ -954,12 +1027,15 @@ static bool RunGUI(MpegTS_XML &mpts)
         high = MIN(high, numVideoFrames);
 
         if(mpts.m_videoAccessUnitsPresentation.size())
+//        if(mpts.m_videoAccessUnitsDecode.size())
         {
             if (ImGui::CollapsingHeader(mpts.m_videoAccessUnitsPresentation[0].esd.name.c_str()))
+//            if (ImGui::CollapsingHeader(mpts.m_videoAccessUnitsDecode[0].esd.name.c_str()))
             {
                 for(unsigned int i = frame; i < high; i++)
                 {
                     AccessUnit &au = mpts.m_videoAccessUnitsPresentation[i];
+//                    AccessUnit &au = mpts.m_videoAccessUnitsDecode[i];
 
                     size_t numPackets = 0;
                     for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)

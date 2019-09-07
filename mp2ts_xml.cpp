@@ -146,6 +146,13 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
 
         if(pAU)
         {
+            tinyxml2::XMLElement* dts = element->FirstChildElement("DTS");
+            if(dts)
+            {
+                pAU->dts = ConvertStringToPTS(dts->GetText());
+                pAU->dts_seconds = ConvertStringToPTSSeconds(dts->GetText());
+            }
+
             tinyxml2::XMLElement* pts = element->FirstChildElement("PTS");
             if(pts)
             {
