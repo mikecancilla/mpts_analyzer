@@ -32,6 +32,8 @@
     - Needs to feed a decoder
 */
 
+#define DUMP_OUTPUT_FILE 0
+
 #include <cstdio>
 #include <cstring>
 #include <cstdarg>
@@ -108,7 +110,10 @@ typedef struct FilteringContext {
     AVFilterGraph *filter_graph;
 } FilteringContext;
 
+#if DUMP_OUTPUT_FILE
 static FILE *g_fpTemp = NULL;
+#endif
+
 static FILE *inputFile = NULL;
 
 // Describes the input file
@@ -238,7 +243,9 @@ static int OpenInputFile(MpegTS_XML &mpts)
 
     av_dump_format(g_ifmt_ctx, 0, inFileName.c_str(), 0);
 
-    g_fpTemp = fopen("C:\\temp.mpg", "wb");
+#if DUMP_OUTPUT_FILE
+    g_fpTemp = fopen("C:\\Temp\\temp.mpg", "wb");
+#endif
 
     return 0;
 }
@@ -253,8 +260,10 @@ static int CloseInputFile(MpegTS_XML &mpts)
 
     avformat_close_input(&g_ifmt_ctx);
 
+#if DUMP_OUTPUT_FILE
     if(g_fpTemp)
         fclose(g_fpTemp);
+#endif
 
     return 0;
 }
@@ -417,13 +426,13 @@ static inline uint32_t read_4_bytes(uint8_t *p)
     return ret;
 }
 
-uint8_t process_adaptation_field(unsigned int indent, uint8_t *&p)
+inline uint8_t process_adaptation_field(uint8_t *&p)
 {
     uint8_t adaptation_field_length = *p;
     return adaptation_field_length+1;
 }
 
-static int FindData(uint8_t *packet)
+static int FindData(uint8_t *packet, int packetSize)
 {
     uint8_t *p = packet;
 
@@ -446,14 +455,12 @@ static int FindData(uint8_t *packet)
 
     PID &= 0x1FFF;
 
-    uint8_t adaptation_field_control = 1;
-
     // Move beyond the 32 bit header
     uint8_t final_byte = *p;
     increment_ptr(p, 1);
 
     uint8_t transport_scrambling_control = (final_byte & 0xC0) >> 6;
-    adaptation_field_control = (final_byte & 0x30) >> 4;
+    uint8_t adaptation_field_control = (final_byte & 0x30) >> 4;
     uint8_t continuity_counter = (final_byte & 0x0F) >> 4;
 
     /*
@@ -464,15 +471,54 @@ static int FindData(uint8_t *packet)
              10    Adaptation_field only, no payload
              11    Adaptation_field followed by payload
     */
+
     uint8_t adaptation_field_length = 0;
 
-    if(2 == adaptation_field_control ||
-       3 == adaptation_field_control)
+    if(2 == adaptation_field_control)
     {
-        adaptation_field_length = process_adaptation_field(2, p);
+        return packetSize;
+    }
+    else if(3 == adaptation_field_control)
+    {
+        adaptation_field_length = process_adaptation_field(p);
     }
 
-    return 4 + adaptation_field_length;
+    increment_ptr(p, adaptation_field_length);
+
+    /*
+    http://dvd.sourceforge.net/dvdinfo/mpeghdrs.html
+
+    TODO: When demuxing to an elementary stream with the -f rawvideo flag,
+    FFMPEG removes start codes outside the range of 0x00-0xB8.
+    I'm just doing what they do.  It makes debugging my output easier.
+    This way I have something to compare against.
+
+    This step is not techinically necessary, a decoder will handle this data
+    if it is in the stream.
+    */
+
+    uint32_t fourBytes = read_4_bytes(p);
+    uint32_t startCodePrefix = (fourBytes & 0xFFFFFF00) >> 8;
+    if(0x000001 == startCodePrefix)
+    {
+        uint8_t startCode = fourBytes & 0xFF;
+
+        // 0xB9-0xFF are stream ids, don't need them
+        while(startCode > 0xB8 && (p+1 - packet < packetSize))
+        {
+            startCodePrefix = 0;
+            while(startCodePrefix != 0x000001 && (p+1 - packet < packetSize))
+            {
+                increment_ptr(p, 1);
+                fourBytes = read_4_bytes(p);
+                startCodePrefix = (fourBytes & 0xFFFFFF00) >> 8;
+            }
+
+            startCode = fourBytes & 0xFF;
+        }
+    }
+
+    return p - packet;
 }
 
 static unsigned int FrameNumberFromBytePos(uint64_t &bytePos, std::vector<AccessUnit> &accessUnitList)
@@ -515,11 +561,13 @@ static unsigned int FrameNumberFromBytePosInternal(uint64_t &bytePos, std::vecto
     return accessUnitList.back().frameNumber;
 }
 
-uint8_t g_pVideoData[500000];
+uint8_t g_pVideoData[1000000];
 
 static void WriteAllFramesToFile(MpegTS_XML &mpts)
 {
-    uint8_t buffer[192];
+#if DUMP_OUTPUT_FILE
+    int packetSize = mpts.m_mpegTSDescriptor.packetSize;
+    uint8_t *buffer = (uint8_t*) alloca(packetSize);
 
     for(unsigned int f=0; f<mpts.m_videoAccessUnitsDecode.size(); f++ )
     {
@@ -530,14 +578,16 @@ static void WriteAllFramesToFile(MpegTS_XML &mpts)
 
             for(unsigned int i=0; i<aue.numPackets; i++)
             {
-                fread(buffer, 188, 1, inputFile);
+                fread(buffer, packetSize, 1, inputFile);
 
-                uint8_t count = FindData(buffer);
+                uint8_t count = FindData(buffer, packetSize);
 
-                fwrite(buffer+count, 188-count, 1, g_fpTemp);
+                if(count)
+                    fwrite(buffer+count, packetSize-count, 1, g_fpTemp);
             }
         }
     }
+#endif
 }
 
 static void FlushDecoder()
@@ -558,7 +608,8 @@ static void FlushDecoder()
 static AVFrame* GetNextVideoFrameInternal(MpegTS_XML &mpts, uint64_t &bytePos, int seekFrame = -1)
 {
     AVFrame *pFrame = NULL;
-    uint8_t buffer[192];
+    unsigned int packetSize = mpts.m_mpegTSDescriptor.packetSize;
+    uint8_t *buffer = (uint8_t*) alloca(packetSize +  4);
 
     static int currentFrame = 0;
 
@@ -579,13 +630,15 @@ static AVFrame* GetNextVideoFrameInternal(MpegTS_XML &mpts, uint64_t &bytePos, i
 
             for(unsigned int i=0; i<aue.numPackets; i++)
             {
-                fread(buffer, 188, 1, inputFile);
+                fread(buffer, packetSize, 1, inputFile);
 
-                uint8_t count = FindData(buffer);
+                uint8_t count = FindData(buffer, packetSize);
 
-                memcpy(g_pVideoData+numBytes, buffer+count, 188-count);
-
-                numBytes += 188-count;
+                if(count)
+                {
+                    memcpy(g_pVideoData+numBytes, buffer+count, packetSize-count);
+                    numBytes += packetSize-count;
+                }
             }
         }
 
@@ -814,8 +867,10 @@ static bool RunGUI(MpegTS_XML &mpts)
 
     Renderer renderer;
 
-    //WriteAllFramesToFile(mpts);
-    //return true;
+#if DUMP_OUTPUT_FILE
+    WriteAllFramesToFile(mpts);
+    return true;
+#endif
 
 #define FFMPEG_DEMUX 0
 #if FFMPEG_DEMUX
