@@ -1,5 +1,7 @@
 #include "mp2ts_xml.h"
 
+#define GOP_LENGTH 30
+
 bool MpegTS_XML::ParsePMT(tinyxml2::XMLElement* root)
 {
     bool bFoundPMT = false;
@@ -28,7 +30,7 @@ bool MpegTS_XML::ParsePMT(tinyxml2::XMLElement* root)
                     case eH264_Video:
                     case eDigiCipher_II_Video:
                     case eMSCODEC_Video:
-                        pAU = &m_currentVideoAU;
+                        pAU = &m_videoAU;
                     break;
 
                     case eMPEG1_Audio:
@@ -39,7 +41,7 @@ bool MpegTS_XML::ParsePMT(tinyxml2::XMLElement* root)
                     case eHDMV_DTS_Audio:
                     case eA52b_AC3_Audio:
                     case eSDDS_Audio:
-                        pAU = &m_currentAudioAU;
+                        pAU = &m_audioAU;
                     break;
                 }
 
@@ -139,10 +141,10 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
 
         AccessUnit *pAU = nullptr;
 
-        if(m_currentVideoAU.esd.pid == thisPID)
-            pAU = &m_currentVideoAU;
-        else if(m_currentAudioAU.esd.pid == thisPID)
-            pAU = &m_currentAudioAU;
+        if(m_videoAU.esd.pid == thisPID)
+            pAU = &m_videoAU;
+        else if(m_audioAU.esd.pid == thisPID)
+            pAU = &m_audioAU;
 
         if(pAU)
         {
@@ -165,6 +167,13 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
                 //pAU->frameType = ConvertStringToFrameType(type->GetText());
                 pAU->frameType = type->GetText();
 
+            if(pAU->frameType == "I")
+            {
+                tinyxml2::XMLElement* closed_gop = element->FirstChildElement("closed_gop");
+                if(closed_gop)
+                    pAU->closed_gop = std::atoi(closed_gop->GetText());
+            }
+
             tinyxml2::XMLElement* slices = element->FirstChildElement("slices");
 
             if(slices)
@@ -183,15 +192,15 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
                 }
             }
 
-            if(pAU == &m_currentVideoAU)
+            if(pAU == &m_videoAU)
             {
-                m_currentVideoAU.frameNumber = videoFrameNumber++;
-                m_videoAccessUnitsDecode.push_back(m_currentVideoAU);
+                m_videoAU.frameNumber = videoFrameNumber++;
+                m_videoAccessUnitsDecode.push_back(m_videoAU);
             }
-            else if(pAU == &m_currentAudioAU)
+            else if(pAU == &m_audioAU)
             {
-                m_currentVideoAU.frameNumber = audioFrameNumber++;
-                m_audioAccessUnits.push_back(m_currentAudioAU);
+                m_videoAU.frameNumber = audioFrameNumber++;
+                m_audioAccessUnits.push_back(m_audioAU);
             }
 
             pAU->accessUnitElements.clear();
@@ -200,16 +209,16 @@ bool MpegTS_XML::ParsePacketListTerse(tinyxml2::XMLElement* root)
         element = element->NextSiblingElement("frame");
     }
 
-    if(m_currentVideoAU.accessUnitElements.size())
+    if(m_videoAU.accessUnitElements.size())
     {
-        m_videoAccessUnitsDecode.push_back(m_currentVideoAU);
-        m_currentVideoAU.accessUnitElements.clear();
+        m_videoAccessUnitsDecode.push_back(m_videoAU);
+        m_videoAU.accessUnitElements.clear();
     }
         
-    if(m_currentAudioAU.accessUnitElements.size())
+    if(m_audioAU.accessUnitElements.size())
     {
-        m_audioAccessUnits.push_back(m_currentAudioAU);
-        m_currentAudioAU.accessUnitElements.clear();
+        m_audioAccessUnits.push_back(m_audioAU);
+        m_audioAU.accessUnitElements.clear();
     }
 
     return true;
@@ -242,10 +251,10 @@ bool MpegTS_XML::ParsePacketList(tinyxml2::XMLElement* root)
 
             AccessUnit *pAU = nullptr;
 
-            if(m_currentVideoAU.esd.pid == thisPID)
-                pAU = &m_currentVideoAU;
-            else if(m_currentAudioAU.esd.pid == thisPID)
-                pAU = &m_currentAudioAU;
+            if(m_videoAU.esd.pid == thisPID)
+                pAU = &m_videoAU;
+            else if(m_audioAU.esd.pid == thisPID)
+                pAU = &m_audioAU;
 
             if(pAU)
             {
@@ -257,15 +266,15 @@ bool MpegTS_XML::ParsePacketList(tinyxml2::XMLElement* root)
                 {
                     if(pAU->accessUnitElements.size())
                     {
-                        if(pAU == &m_currentVideoAU)
+                        if(pAU == &m_videoAU)
                         {
-                            m_currentVideoAU.frameNumber = videoFrameNumber++;
-                            m_videoAccessUnitsDecode.push_back(m_currentVideoAU);
+                            m_videoAU.frameNumber = videoFrameNumber++;
+                            m_videoAccessUnitsDecode.push_back(m_videoAU);
                         }
-                        else if(pAU == &m_currentAudioAU)
+                        else if(pAU == &m_audioAU)
                         {
-                            m_currentVideoAU.frameNumber = audioFrameNumber++;
-                            m_audioAccessUnits.push_back(m_currentAudioAU);
+                            m_videoAU.frameNumber = audioFrameNumber++;
+                            m_audioAccessUnits.push_back(m_audioAU);
                         }
                     }
 
@@ -298,23 +307,28 @@ bool MpegTS_XML::ParsePacketList(tinyxml2::XMLElement* root)
             element = element->NextSiblingElement("packet");
         }
 
-        if(m_currentVideoAU.accessUnitElements.size())
+        if(m_videoAU.accessUnitElements.size())
         {
-            m_videoAccessUnitsDecode.push_back(m_currentVideoAU);
-            m_currentVideoAU.accessUnitElements.clear();
+            m_videoAccessUnitsDecode.push_back(m_videoAU);
+            m_videoAU.accessUnitElements.clear();
         }
         
-        if(m_currentAudioAU.accessUnitElements.size())
+        if(m_audioAU.accessUnitElements.size())
         {
-            m_audioAccessUnits.push_back(m_currentAudioAU);
-            m_currentAudioAU.accessUnitElements.clear();
+            m_audioAccessUnits.push_back(m_audioAU);
+            m_audioAU.accessUnitElements.clear();
         }
 
         ret = true;
     }
 
+    BuildPresentationUnits(0);
+
+/*
     uint32_t frameNumber = 0;
 
+    // Frame reordering: decode order to presentation order.
+    // Build a presentation order list too.
     if(ret && m_videoAccessUnitsDecode.size())
     {
         AccessUnit *referenceFrame = NULL;
@@ -337,6 +351,7 @@ bool MpegTS_XML::ParsePacketList(tinyxml2::XMLElement* root)
 
         AddPresentationUnit(*referenceFrame, frameNumber++);
     }
+*/
 
     return ret;
 }
@@ -345,4 +360,93 @@ inline void MpegTS_XML::AddPresentationUnit(AccessUnit au, uint32_t frameNumber)
 {
     au.frameNumber = frameNumber;
     m_videoAccessUnitsPresentation.push_back(au);
+}
+
+// Frame reordering: decode order to presentation order.
+// Call this after a seek
+unsigned int MpegTS_XML::BuildPresentationUnits(unsigned int startFrameNumber)
+{
+    unsigned int retCount = startFrameNumber;
+    bool bRetCountSet = false;
+
+    if(m_videoAccessUnitsDecode.size())
+    {
+        m_previousReferenceFrame = nullptr;
+
+        m_videoAccessUnitsPresentation.clear();
+
+        bool closedGOP = m_videoAccessUnitsDecode[startFrameNumber].closed_gop;
+
+        unsigned int addFrameCount = startFrameNumber;
+        unsigned int i = startFrameNumber;
+        unsigned int endFrameNumber = startFrameNumber+GOP_LENGTH;
+        for(; i<endFrameNumber && i < m_videoAccessUnitsDecode.size(); i++)
+        {
+            if(m_videoAccessUnitsDecode[i].frameType == "I" ||
+               m_videoAccessUnitsDecode[i].frameType == "P")
+            {
+                if(m_previousReferenceFrame)
+                {
+                    if(!bRetCountSet)
+                    {
+                        retCount = addFrameCount;
+                        bRetCountSet = true;
+                    }
+
+                    AddPresentationUnit(*m_previousReferenceFrame, addFrameCount++);
+                    
+                    // Always set closedGOP to true once second reference frame is found
+                    closedGOP = true;
+                }
+
+                m_previousReferenceFrame = &(m_videoAccessUnitsDecode[i]);
+            }
+            else
+            {
+                if(closedGOP)
+                    AddPresentationUnit(m_videoAccessUnitsDecode[i], addFrameCount++);
+                else
+                {
+                    // We are skipping B frames since Open GOP.
+                    // Increment frame count
+                    // Increment endFrameNumber so we get a full GOP length of frames added
+                    addFrameCount++;
+                    endFrameNumber++;
+                }
+            }
+        }
+
+        if(m_previousReferenceFrame)
+            AddPresentationUnit(*m_previousReferenceFrame, addFrameCount++);
+
+        m_startFrameNumber = startFrameNumber;
+    }
+
+    return retCount;
+}
+
+bool MpegTS_XML::UpdatePresentationUnits(unsigned int frameDisplaying)
+{
+    bool bRet = false;
+
+    // Frame reordering: decode order to presentation order.
+    // Build a presentation order list too.
+
+    unsigned int index = frameDisplaying + m_videoAccessUnitsPresentation.size()-1;
+
+    if(index < m_videoAccessUnitsDecode.size())
+    {
+        bRet = true;
+        int i = 0;
+        for(; i<m_videoAccessUnitsPresentation.size()-1; i++)
+            m_videoAccessUnitsPresentation[i] = m_videoAccessUnitsPresentation[i+1];
+
+        m_videoAccessUnitsPresentation[i] = m_videoAccessUnitsDecode[index];
+    }
+    else
+    {
+        m_videoAccessUnitsPresentation.pop_front();
+    }
+
+    return bRet;
 }

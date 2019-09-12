@@ -2,9 +2,12 @@
 
 #include <string>
 #include <vector>
+#include <deque>
 
 // Tinyxml
 #include "tinyxml2.h"
+
+struct AVFrame;
 
 /*
 Taken from: http://www.sno.phy.queensu.ca/~phil/exiftool/TagNames/M2TS.html
@@ -130,6 +133,7 @@ struct AccessUnit
         , frameType("")
         , pts(0)
         , pts_seconds(0.f)
+        , closed_gop(0)
     {
     }
 
@@ -139,6 +143,7 @@ struct AccessUnit
         , frameType("")
         , pts(0)
         , pts_seconds(0.f)
+        , closed_gop(0)
     {
     }
 
@@ -148,6 +153,7 @@ struct AccessUnit
     float dts_seconds;
     uint64_t pts;
     float pts_seconds;
+    uint8_t closed_gop;
 };
 
 struct MpegTSDescriptor
@@ -174,6 +180,9 @@ public:
     , m_bParsedPMT(false)
     , m_videoStreamIndex(-1)
     , m_audioStreamIndex(-1)
+    , m_previousReferenceFrame(nullptr)
+    , m_decodeFrameNumber(0)
+    , m_startFrameNumber(0)
     {
     }
 
@@ -181,12 +190,16 @@ public:
     bool ParseMpegTSDescriptor(tinyxml2::XMLElement* root);
     bool ParsePacketList(tinyxml2::XMLElement* root);
     bool ParsePacketListTerse(tinyxml2::XMLElement* root);
-    //bool Reorder
+
+    unsigned int BuildPresentationUnits(unsigned int startFrameNumber);
+    bool UpdatePresentationUnits(unsigned int frameDisplaying);
+
+    AVFrame* GetNextVideoFrameInternal(uint64_t &bytePos, int seekFrame = -1);
 
 public:
     MpegTSDescriptor            m_mpegTSDescriptor;
     std::vector<AccessUnit>     m_videoAccessUnitsDecode;
-    std::vector<AccessUnit>     m_videoAccessUnitsPresentation;
+    std::deque<AccessUnit>      m_videoAccessUnitsPresentation;
     std::vector<AccessUnit>     m_audioAccessUnits;
     int                         m_videoStreamIndex;
     int                         m_audioStreamIndex;
@@ -194,8 +207,12 @@ public:
 private:
     bool                        m_bParsedMpegTSDescriptor = false;
     bool                        m_bParsedPMT = false;
-    AccessUnit                  m_currentVideoAU;
-    AccessUnit                  m_currentAudioAU;
+    AccessUnit                  m_videoAU;
+    AccessUnit                  m_audioAU;
+    AccessUnit                  *m_previousReferenceFrame;
+    int                         m_decodeFrameNumber;
+    uint32_t                    m_startFrameNumber;
+
     //std::vector<ElementaryStream> gElementaryStreams;
 
     inline void AddPresentationUnit(AccessUnit au, uint32_t frameNumber);
