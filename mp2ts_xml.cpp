@@ -404,7 +404,15 @@ unsigned int MpegTS_XML::BuildPresentationUnits(unsigned int startFrameNumber)
             else
             {
                 if(closedGOP)
+                {
+                    if(!bRetCountSet)
+                    {
+                        retCount = addFrameCount;
+                        bRetCountSet = true;
+                    }
+
                     AddPresentationUnit(m_videoAccessUnitsDecode[i], addFrameCount++);
+                }
                 else
                 {
                     // We are skipping B frames since Open GOP.

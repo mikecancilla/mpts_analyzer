@@ -985,6 +985,7 @@ static bool RunGUI(MpegTS_XML &mpts)
 
             printf("----------\n");
 
+/*
             while(g_pFrame && AV_PICTURE_TYPE_I != g_pFrame->pict_type)
             {
                 switch(g_pFrame->pict_type)
@@ -1008,6 +1009,7 @@ static bool RunGUI(MpegTS_XML &mpts)
                 g_pFrame = mpts.GetNextVideoFrameInternal(fileBytePos);
 #endif
             }
+*/
 
             bNeedFrame = false;
             bNewFrame = true;
