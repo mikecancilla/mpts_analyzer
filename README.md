@@ -1,6 +1,6 @@
 "# mp2ts_analyzer" 
 
-# mp2ts_parser
+# mp2ts_analyzer
 
 (C) 2019, Mike Cancilla
 
