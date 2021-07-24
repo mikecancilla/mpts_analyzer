@@ -194,7 +194,7 @@ public:
     unsigned int BuildPresentationUnits(unsigned int startFrameNumber);
     bool UpdatePresentationUnits(unsigned int frameDisplaying);
 
-    AVFrame* GetNextVideoFrameInternal(uint64_t &bytePos, int seekFrame = -1);
+    AVFrame* GetNextVideoFrameInternal(MpegTS_XML& mpts, uint64_t &bytePos, int seekFrame = -1);
 
 public:
     MpegTSDescriptor            m_mpegTSDescriptor;

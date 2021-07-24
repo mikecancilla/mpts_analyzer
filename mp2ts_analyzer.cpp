@@ -186,7 +186,7 @@ static int OpenInputFile(MpegTS_XML &mpts)
             {
                 mpts.m_videoStreamIndex = streamIndex;
                 bWantVideoIndex = false;
-                break;
+                continue;
             }
         }
 
@@ -196,7 +196,7 @@ static int OpenInputFile(MpegTS_XML &mpts)
             {
                 mpts.m_audioStreamIndex = streamIndex;
                 bWantAudioIndex = false;
-                break;
+                continue;
             }
         }
     }
@@ -322,34 +322,32 @@ static void FlipAvFrame(AVFrame *pFrame)
     pFrame->linesize[2] = -(pFrame->linesize[2]);
 }
 
-static uint8_t *dst_data[4];
+static uint8_t* dst_data[4];
 static int dst_linesize[4];
 
-static bool WriteFrame(AVCodecContext *dec_ctx,
-                       AVFrame *frame,
-                       int frame_num,
-                       TexturePresenter *pTexturePresenter,
+static bool WriteFrame(AVCodecContext* dec_ctx,
+    AVFrame* frame,
+    int frame_num,
+    TexturePresenter* pTexturePresenter,
                        bool bNewFrame)
 {
     enum AVPixelFormat dst_pix_fmt = AV_PIX_FMT_RGBA;
-    struct SwsContext *sws_ctx = NULL;
+    struct SwsContext* sws_ctx = NULL;
 
-    if(bNewFrame)
-    {
-        if(dst_data[0])
+    if (bNewFrame) {
+        if (dst_data[0])
             av_freep(&dst_data[0]);
 
         // create scaling context
-        sws_ctx = sws_getContext(frame->width, frame->height, (enum AVPixelFormat) frame->format,
-                                 frame->width, frame->height, dst_pix_fmt,
-                                 SWS_BILINEAR, NULL, NULL, NULL);
-        if (!sws_ctx)
-        {
+        sws_ctx = sws_getContext(frame->width, frame->height, (enum AVPixelFormat)frame->format,
+            frame->width, frame->height, dst_pix_fmt,
+            SWS_BILINEAR, NULL, NULL, NULL);
+        if (!sws_ctx) {
             fprintf(stderr,
-                    "Impossible to create scale context for the conversion "
-                    "fmt:%s s:%dx%d -> fmt:%s s:%dx%d\n",
-                    av_get_pix_fmt_name((enum AVPixelFormat) frame->format), frame->width, frame->height,
-                    av_get_pix_fmt_name(dst_pix_fmt), frame->width, frame->height);
+                "Impossible to create scale context for the conversion "
+                "fmt:%s s:%dx%d -> fmt:%s s:%dx%d\n",
+                av_get_pix_fmt_name((enum AVPixelFormat)frame->format), frame->width, frame->height,
+                av_get_pix_fmt_name(dst_pix_fmt), frame->width, frame->height);
             return false;
         }
 
@@ -357,20 +355,20 @@ static bool WriteFrame(AVCodecContext *dec_ctx,
 
         // buffer is going to be rawvideo file, no alignment
         if ((dst_bufsize = av_image_alloc(dst_data, dst_linesize,
-                                          frame->width, frame->height, dst_pix_fmt, 1)) < 0)
-        {
+            //frame->width, frame->height, dst_pix_fmt, 1)) < 0)
+            dec_ctx->width, dec_ctx->height, dst_pix_fmt, 1)) < 0) {
             fprintf(stderr, "Could not allocate destination image\n");
             return false;
         }
 
         /* convert to destination format */
         sws_scale(sws_ctx,
-                  (const uint8_t * const*) frame->data,
-                  frame->linesize,
-                  0,
-                  frame->height,
-                  dst_data,
-                  dst_linesize);
+            (const uint8_t* const*)frame->data,
+            frame->linesize,
+            0,
+            frame->height,
+            dst_data,
+            dst_linesize);
 
         // Save the frame to disk, only works with 24 bpp
         //SaveFrame(dst_data[0], frame->width, frame->height, dst_linesize[0], frame_num);
@@ -388,7 +386,7 @@ static bool WriteFrame(AVCodecContext *dec_ctx,
         */
     }
 
-	pTexturePresenter->Render(dst_data[0], dec_ctx->width, dec_ctx->height);
+    pTexturePresenter->Render(dst_data[0], dec_ctx->width, dec_ctx->height);
 
     sws_freeContext(sws_ctx);
 
@@ -403,18 +401,18 @@ static size_t inline increment_ptr(uint8_t *&p, size_t bytes)
 
 static inline uint16_t read_2_bytes(uint8_t *p)
 {
-	uint16_t ret = *p++;
-	ret <<= 8;
-	ret |= *p++;
+    uint16_t ret = *p++;
+    ret <<= 8;
+    ret |= *p++;
 
-	return ret;
+    return ret;
 }
 
 static inline uint32_t read_4_bytes(uint8_t *p)
 {
     uint32_t ret = 0;
     uint32_t val = *p++;
-    ret = val<<24;
+    ret = val << 24;
     val = *p++;
     ret |= val << 16;
     val = *p++;
@@ -427,15 +425,14 @@ static inline uint32_t read_4_bytes(uint8_t *p)
 inline uint8_t process_adaptation_field(uint8_t *&p)
 {
     uint8_t adaptation_field_length = *p;
-    return adaptation_field_length+1;
+    return adaptation_field_length + 1;
 }
 
 static int FindData(uint8_t *packet, int packetSize)
 {
-    uint8_t *p = packet;
+    uint8_t* p = packet;
 
-    if (0x47 != *p)
-    {
+    if (0x47 != *p) {
         fprintf(stderr, "Error: Packet does not start with 0x47\n");
         return -1;
     }
@@ -472,12 +469,9 @@ static int FindData(uint8_t *packet, int packetSize)
 
     uint8_t adaptation_field_length = 0;
 
-    if(2 == adaptation_field_control)
-    {
+    if (2 == adaptation_field_control) {
         return packetSize;
-    }
-    else if(3 == adaptation_field_control)
-    {
+    } else if (3 == adaptation_field_control) {
         adaptation_field_length = process_adaptation_field(p);
     }
 
@@ -497,16 +491,13 @@ static int FindData(uint8_t *packet, int packetSize)
 
     uint32_t fourBytes = read_4_bytes(p);
     uint32_t startCodePrefix = (fourBytes & 0xFFFFFF00) >> 8;
-    if(0x000001 == startCodePrefix)
-    {
+    if (0x000001 == startCodePrefix) {
         uint8_t startCode = fourBytes & 0xFF;
 
         // 0xB9-0xFF are stream ids, don't need them
-        while(startCode > 0xB8 && (p+1 - packet < packetSize))
-        {
+        while (startCode > 0xB8 && (p + 1 - packet < packetSize)) {
             startCodePrefix = 0;
-            while(startCodePrefix != 0x000001 && (p+1 - packet < packetSize))
-            {
+            while (startCodePrefix != 0x000001 && (p + 1 - packet < packetSize)) {
                 increment_ptr(p, 1);
                 fourBytes = read_4_bytes(p);
                 startCodePrefix = (fourBytes & 0xFFFFFF00) >> 8;
@@ -522,14 +513,12 @@ static int FindData(uint8_t *packet, int packetSize)
 static unsigned int FrameNumberFromBytePos(uint64_t &bytePos, std::vector<AccessUnit> &accessUnitList)
 {
     // If searching for beginning of file, just return 0
-    if(0 == bytePos)
+    if (0 == bytePos)
         return 0;
 
     // Look for bytePos in the list of AUs
-    for(std::vector<AccessUnit>::iterator i = accessUnitList.begin(); i < accessUnitList.end(); i++)
-    {
-        if(i->accessUnitElements[0].startByteLocation >= bytePos)
-        {
+    for (std::vector<AccessUnit>::iterator i = accessUnitList.begin(); i < accessUnitList.end(); i++) {
+        if (i->accessUnitElements[0].startByteLocation >= bytePos) {
             bytePos = i->accessUnitElements[0].startByteLocation;
             return i->frameNumber;
         }
@@ -542,14 +531,12 @@ static unsigned int FrameNumberFromBytePos(uint64_t &bytePos, std::vector<Access
 static unsigned int FrameNumberFromBytePosInternal(uint64_t &bytePos, std::vector<AccessUnit> &accessUnitList)
 {
     // If searching for beginning of file, just return 0
-    if(0 == bytePos)
+    if (0 == bytePos)
         return 0;
 
     // Look for bytePos in the list of AUs
-    for(std::vector<AccessUnit>::iterator i = accessUnitList.begin(); i < accessUnitList.end(); i++)
-    {
-        if(i->accessUnitElements[0].startByteLocation >= bytePos && i->frameType == "I")
-        {
+    for (std::vector<AccessUnit>::iterator i = accessUnitList.begin(); i < accessUnitList.end(); i++) {
+        if (i->accessUnitElements[0].startByteLocation >= bytePos && i->frameType == "I") {
             bytePos = i->accessUnitElements[0].startByteLocation;
             return i->frameNumber;
         }
@@ -565,23 +552,20 @@ static void WriteAllFramesToFile(MpegTS_XML &mpts)
 {
 #if DUMP_OUTPUT_FILE
     int packetSize = mpts.m_mpegTSDescriptor.packetSize;
-    uint8_t *buffer = (uint8_t*) alloca(packetSize);
+    uint8_t* buffer = (uint8_t*)alloca(packetSize);
 
-    for(unsigned int f=0; f<mpts.m_videoAccessUnitsDecode.size(); f++ )
-    {
-        for(auto aue : mpts.m_videoAccessUnitsDecode[f].accessUnitElements)
-        {
+    for (unsigned int f = 0; f < mpts.m_videoAccessUnitsDecode.size(); f++) {
+        for (auto aue : mpts.m_videoAccessUnitsDecode[f].accessUnitElements) {
             // Seek to aue.startByteLocation
             fseek(inputFile, aue.startByteLocation, SEEK_SET);
 
-            for(unsigned int i=0; i<aue.numPackets; i++)
-            {
+            for (unsigned int i = 0; i < aue.numPackets; i++) {
                 fread(buffer, packetSize, 1, inputFile);
 
                 uint8_t count = FindData(buffer, packetSize);
 
-                if(count)
-                    fwrite(buffer+count, packetSize-count, 1, g_fpTemp);
+                if (count)
+                    fwrite(buffer + count, packetSize - count, 1, g_fpTemp);
             }
         }
     }
@@ -593,55 +577,51 @@ static void FlushDecoder()
     int ret = avcodec_send_packet(g_stream_ctx[0].dec_ctx, NULL);
 
     while (ret >= 0) {
-        AVFrame *frame = av_frame_alloc();
-        ret = avcodec_receive_frame(g_stream_ctx[0].dec_ctx, frame);
+        AVFrame* frame = av_frame_alloc();
+        ret = avcodec_receive_frame(g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx, frame);
         av_frame_free(&frame);
     }
 
     //avformat_flush(g_ifmt_ctx);
     //avio_flush(g_ifmt_ctx->pb);
-    avcodec_flush_buffers(g_stream_ctx[0].dec_ctx);
+    avcodec_flush_buffers(g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx);
 }
 
 AVFrame* MpegTS_XML::GetNextVideoFrameInternal(uint64_t &bytePos, int seekFrame)
 {
-    AVFrame *pFrame = NULL;
+    AVFrame* pFrame = NULL;
     unsigned int packetSize = m_mpegTSDescriptor.packetSize;
-    uint8_t *buffer = (uint8_t*) alloca(packetSize +  4);
+    uint8_t* buffer = (uint8_t*)alloca(packetSize + 4);
 
-    if(-1 != seekFrame)
+    if (-1 != seekFrame)
         m_decodeFrameNumber = seekFrame;
 
-    while(1)
-    {
-        if(m_decodeFrameNumber > m_videoAccessUnitsDecode.size()-1)
+    while (1) {
+        if (m_decodeFrameNumber > m_videoAccessUnitsDecode.size() - 1)
             return NULL;
 
         unsigned int numBytes = 0;
 
-        for(auto aue : m_videoAccessUnitsDecode[m_decodeFrameNumber].accessUnitElements)
-        {
+        for (auto aue : m_videoAccessUnitsDecode[m_decodeFrameNumber].accessUnitElements) {
             // Seek to aue.startByteLocation
             fseek(inputFile, aue.startByteLocation, SEEK_SET);
 
-            for(unsigned int i=0; i<aue.numPackets; i++)
-            {
+            for (unsigned int i = 0; i < aue.numPackets; i++) {
                 fread(buffer, packetSize, 1, inputFile);
 
                 uint8_t count = FindData(buffer, packetSize);
 
-                if(count)
-                {
-                    memcpy(g_pVideoData+numBytes, buffer+count, packetSize-count);
-                    numBytes += packetSize-count;
+                if (count) {
+                    memcpy(g_pVideoData + numBytes, buffer + count, packetSize - count);
+                    numBytes += packetSize - count;
                 }
             }
         }
 
         AVPacket packet;
         av_init_packet(&packet);
-        
-        if(m_videoAccessUnitsDecode[m_decodeFrameNumber].frameType == "I")
+
+        if (m_videoAccessUnitsDecode[m_decodeFrameNumber].frameType == "I")
             packet.flags = AV_PKT_FLAG_KEY;
 
         //memset(&packet, 0, sizeof(packet));
@@ -657,27 +637,24 @@ AVFrame* MpegTS_XML::GetNextVideoFrameInternal(uint64_t &bytePos, int seekFrame)
 
         m_decodeFrameNumber++;
 
-        int streamIndex = packet.stream_index;
+        int streamIndex = mpts.m_videoStreamIndex;
 
         //If the packet is from the video stream
-        //if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-        {
+        if (g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             // Send a packet to the decoder
             int ret = avcodec_send_packet(g_stream_ctx[streamIndex].dec_ctx, &packet);
 
             // Unref the packet
             av_packet_unref(&packet);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Error while sending a packet to the decoder\n");
                 break;
             }
 
             pFrame = av_frame_alloc();
 
-            if (!pFrame)
-            {
+            if (!pFrame) {
                 av_log(NULL, AV_LOG_ERROR, "Decode thread could not allocate frame\n");
                 ret = AVERROR(ENOMEM);
                 break;
@@ -685,13 +662,10 @@ AVFrame* MpegTS_XML::GetNextVideoFrameInternal(uint64_t &bytePos, int seekFrame)
 
             // Get a frame from the decoder
             ret = avcodec_receive_frame(g_stream_ctx[streamIndex].dec_ctx, pFrame);
-            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-            {
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
                 av_frame_free(&pFrame);
                 continue;
-            }
-            else if (ret < 0)
-            {
+            } else if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Error while receiving a frame from the decoder\n");
                 av_frame_free(&pFrame);
                 break;
@@ -702,7 +676,7 @@ AVFrame* MpegTS_XML::GetNextVideoFrameInternal(uint64_t &bytePos, int seekFrame)
         }
     }
 
-    if(pFrame)
+    if (pFrame)
         FlipAvFrame(pFrame);
 
     return pFrame;
@@ -711,31 +685,28 @@ AVFrame* MpegTS_XML::GetNextVideoFrameInternal(uint64_t &bytePos, int seekFrame)
 static AVFrame* GetNextVideoFrameFFMPEG()
 {
     AVPacket packet;
-    AVFrame *pFrame = NULL;
+    AVFrame* pFrame = NULL;
 
     while(av_read_frame(g_ifmt_ctx, &packet) >= 0)
     {
         int streamIndex = packet.stream_index;
 
         //If the packet is from the video stream
-        if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-        {
+        if (g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             // Send a packet to the decoder
             int ret = avcodec_send_packet(g_stream_ctx[streamIndex].dec_ctx, &packet);
 
             // Unref the packet
             av_packet_unref(&packet);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Error while sending a packet to the decoder\n");
                 break;
             }
 
             pFrame = av_frame_alloc();
 
-            if (!pFrame)
-            {
+            if (!pFrame) {
                 av_log(NULL, AV_LOG_ERROR, "Decode thread could not allocate frame\n");
                 ret = AVERROR(ENOMEM);
                 break;
@@ -743,13 +714,10 @@ static AVFrame* GetNextVideoFrameFFMPEG()
 
             // Get a frame from the decoder
             ret = avcodec_receive_frame(g_stream_ctx[streamIndex].dec_ctx, pFrame);
-            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-            {
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
                 av_frame_free(&pFrame);
                 continue;
-            }
-            else if (ret < 0)
-            {
+            } else if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Error while receiving a frame from the decoder\n");
                 av_frame_free(&pFrame);
                 break;
@@ -760,7 +728,7 @@ static AVFrame* GetNextVideoFrameFFMPEG()
         }
     }
 
-    if(pFrame)
+    if (pFrame)
         FlipAvFrame(pFrame);
 
     return pFrame;
@@ -771,11 +739,10 @@ static void DoSeekTest()
     int videoStreamIndex = -1;
     float duration = 0;
 
-    for(unsigned int streamIndex = 0; streamIndex < g_ifmt_ctx->nb_streams; streamIndex++)
-        if(g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-        {
-            AVStream *stream = g_ifmt_ctx->streams[streamIndex];
-            duration = (float) stream->duration;
+    for (unsigned int streamIndex = 0; streamIndex < g_ifmt_ctx->nb_streams; streamIndex++)
+        if (g_ifmt_ctx->streams[streamIndex]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            AVStream* stream = g_ifmt_ctx->streams[streamIndex];
+            duration = (float)stream->duration;
             videoStreamIndex = streamIndex;
             break;
         }
@@ -789,25 +756,24 @@ static void DoSeekTest()
     int seekValue = seekValueLast;
     ImGui::SliderInt("Seek", &seekValue, 1, 100);
 
-    if(seekValueLast != seekValue)
-    {
+    if (seekValueLast != seekValue) {
         seekValueLast = seekValue;
 
-        float percent = (float) seekValue / 100.f;
-        uint64_t seekTS = (uint64_t) (duration * percent);
+        float percent = (float)seekValue / 100.f;
+        uint64_t seekTS = (uint64_t)(duration * percent);
 
         avformat_flush(g_ifmt_ctx);
         avio_flush(g_ifmt_ctx->pb);
         avformat_seek_file(g_ifmt_ctx, videoStreamIndex, seekTS, seekTS, seekTS, 0);
 
-        if(g_pFrame)
+        if (g_pFrame)
             av_frame_free(&g_pFrame);
 
         g_pFrame = GetNextVideoFrameFFMPEG();
     }
 
     bool bNewFrame = true;
-    if(g_pFrame)
+    if (g_pFrame)
         WriteFrame(g_stream_ctx[videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter, bNewFrame);
 
     ImGui::End();
@@ -825,13 +791,12 @@ static bool RunGUI(MpegTS_XML &mpts)
 
     std::string windowTitle = "Mpeg2-Ts Parser GUI: ";
     windowTitle += mpts.m_mpegTSDescriptor.fileName;
-    if(0 != InitOpenGL(windowTitle))
+    if (0 != InitOpenGL(windowTitle))
         return false;
 
     g_pTexturePresenter = new TexturePresenter(g_window, "");
 
-    if(NULL == g_pTexturePresenter)
-    {
+    if (NULL == g_pTexturePresenter) {
         CloseOpenGL();
         return false;
     }
@@ -839,8 +804,8 @@ static bool RunGUI(MpegTS_XML &mpts)
     unsigned int err = GLFW_NO_ERROR;
 
     ImGui::CreateContext();
-	ImGui_ImplGlfwGL3_Init(g_window, true);
-	ImGui::StyleColorsDark();
+    ImGui_ImplGlfwGL3_Init(g_window, true);
+    ImGui::StyleColorsDark();
 
     int ret = 0;
     int frame_num = 0;
@@ -858,7 +823,7 @@ static bool RunGUI(MpegTS_XML &mpts)
     float blue = 154.f;
     float blueInc = 7.f;
 
-    unsigned int numVideoFrames = mpts.m_videoAccessUnitsDecode.size()-1;
+    unsigned int numVideoFrames = mpts.m_videoAccessUnitsDecode.size() - 1;
     size_t bytePosOfLastAU = BytePosOfLastAU(mpts.m_videoAccessUnitsDecode);
 
     Renderer renderer;
@@ -873,20 +838,18 @@ static bool RunGUI(MpegTS_XML &mpts)
     avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, 0, 0, 0, AVSEEK_FLAG_BYTE);
     g_pFrame = GetNextVideoFrameFFMPEG();
 #else
-    g_pFrame = mpts.GetNextVideoFrameInternal(fileBytePos);
+    g_pFrame = mpts.GetNextVideoFrameInternal(mpts, fileBytePos);
 #endif
 
-    if(!g_pFrame)
-    {
+    if (!g_pFrame) {
         fprintf(stderr, "Error: Unable to decode %s\n", mpts.m_mpegTSDescriptor.fileName.c_str());
         return false;
     }
 
     bool bNewFrame = true;
 
-    while(!glfwWindowShouldClose(g_window))
-    {
-		glClearColor(0.f, 0.f, 0.f, 1.f);
+    while (!glfwWindowShouldClose(g_window)) {
+        glClearColor(0.f, 0.f, 0.f, 1.f);
         renderer.Clear();
 
 #define RUN_TEST 0
@@ -904,29 +867,24 @@ static bool RunGUI(MpegTS_XML &mpts)
 
         ImGui::SameLine();
 
-//        ImVec4 color = ImVec4(red/255.0f, green/255.0f, blue/255.0f, 1.f);
-//        ImGui::ColorButton("ColorButton", *(ImVec4*)&color, 0x00020000, ImVec2(20,20));
+        //        ImVec4 color = ImVec4(red/255.0f, green/255.0f, blue/255.0f, 1.f);
+        //        ImGui::ColorButton("ColorButton", *(ImVec4*)&color, 0x00020000, ImVec2(20,20));
 
         // Keyboard or Play Button
         if ((ImGui::GetIO().KeysDownDuration[32] > 0.f && ImGui::GetIO().KeysDownDuration[32] < 0.04f) ||
-            ImGui::ArrowButton("Play", ImGuiDir_Right))
-        {
-            if(eStopped == g_playState)
-            {
+            ImGui::ArrowButton("Play", ImGuiDir_Right)) {
+            if (eStopped == g_playState) {
                 framesToDecode = numVideoFrames - frameDisplaying;
                 g_playState = ePlaying;
                 bNeedFrame = true;
-            }
-            else
-            {
+            } else {
                 g_playState = eStopped;
                 bNeedFrame = false;
             }
         }
 
         // Right Arrow Key
-        if (ImGui::IsKeyPressed(KEY_RIGHT_ARROW))
-        {
+        if (ImGui::IsKeyPressed(KEY_RIGHT_ARROW)) {
             g_playState = eStopped;
             bNeedFrame = true;
             framesDecoded = 0;
@@ -936,23 +894,21 @@ static bool RunGUI(MpegTS_XML &mpts)
         bool bForceSeek = false;
 
         // Left Arrow Key
-        if (ImGui::IsKeyPressed(KEY_LEFT_ARROW))
-        {
+        if (ImGui::IsKeyPressed(KEY_LEFT_ARROW)) {
             seekValue--;
             seekValue = MAX(0, seekValue);
 
-            if(seekValueLast == seekValue &&
-               frameDisplaying != 0)
+            if (seekValueLast == seekValue &&
+                frameDisplaying != 0)
                 bForceSeek = true;
         }
 
-        fileBytePos = (uint64_t) ((float) bytePosOfLastAU * ((float) seekValue / 100.f));
+        fileBytePos = (uint64_t)((float)bytePosOfLastAU * ((float)seekValue / 100.f));
 
         static size_t lastFileBytePos = 0;
 
-        if(seekValueLast != seekValue ||
-           bForceSeek)
-        {
+        if (seekValueLast != seekValue ||
+            bForceSeek) {
             g_playState = eStopped;
             seekValueLast = seekValue;
             lastFileBytePos = fileBytePos;
@@ -966,18 +922,19 @@ static bool RunGUI(MpegTS_XML &mpts)
             av_seek_frame(g_ifmt_ctx, mpts.m_videoStreamIndex, timeStampPos, 0);
             */
 
-            if(g_pFrame)
+            if (g_pFrame)
                 av_frame_free(&g_pFrame);
 
 #if FFMPEG_DEMUX
-            frameDisplaying =  FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnitsPresentation);
+            //            frameDisplaying = FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnitsPresentation);
+            frameDisplaying = FrameNumberFromBytePos(fileBytePos, mpts.m_videoAccessUnitsDecode);
             avformat_seek_file(g_ifmt_ctx, mpts.m_videoStreamIndex, fileBytePos, fileBytePos, fileBytePos, AVSEEK_FLAG_BYTE);
             g_pFrame = GetNextVideoFrameFFMPEG();
 #else
-            FlushDecoder();
+            FlushDecoder(mpts);
             //frameDisplaying = FrameNumberFromBytePosInternal(fileBytePos, mpts.m_videoAccessUnitsPresentation);
             frameDisplaying = FrameNumberFromBytePosInternal(fileBytePos, mpts.m_videoAccessUnitsDecode);
-            g_pFrame = mpts.GetNextVideoFrameInternal(fileBytePos, frameDisplaying);
+            g_pFrame = mpts.GetNextVideoFrameInternal(mpts, fileBytePos, frameDisplaying);
 #endif
 
             // BuildPresentationUnits can skip initial B frames if Open GOP
@@ -985,51 +942,47 @@ static bool RunGUI(MpegTS_XML &mpts)
 
             printf("----------\n");
 
-/*
-            while(g_pFrame && AV_PICTURE_TYPE_I != g_pFrame->pict_type)
-            {
-                switch(g_pFrame->pict_type)
-                {
-                    case AV_PICTURE_TYPE_P:
-                        printf("%d: P Frame\n", frameDisplaying);
-                    break;
+            /*
+                        while(g_pFrame && AV_PICTURE_TYPE_I != g_pFrame->pict_type)
+                        {
+                            switch(g_pFrame->pict_type)
+                            {
+                                case AV_PICTURE_TYPE_P:
+                                    printf("%d: P Frame\n", frameDisplaying);
+                                break;
 
-                    case AV_PICTURE_TYPE_B:
-                        printf("%d: B Frame\n", frameDisplaying);
-                    break;
-                }
+                                case AV_PICTURE_TYPE_B:
+                                    printf("%d: B Frame\n", frameDisplaying);
+                                break;
+                            }
 
-                frameDisplaying++;
+                            frameDisplaying++;
 
-                av_frame_free(&g_pFrame);
+                            av_frame_free(&g_pFrame);
 
-#if FFMPEG_DEMUX
-                g_pFrame = GetNextVideoFrameFFMPEG();
-#else
-                g_pFrame = mpts.GetNextVideoFrameInternal(fileBytePos);
-#endif
-            }
-*/
+            #if FFMPEG_DEMUX
+                            g_pFrame = GetNextVideoFrameFFMPEG();
+            #else
+                            g_pFrame = mpts.GetNextVideoFrameInternal(mpts, fileBytePos);
+            #endif
+                        }
+            */
 
             bNeedFrame = false;
             bNewFrame = true;
-        }
-        else
-        {
+        } else {
             // If still frames to read
-            if(bNeedFrame)
-            {
-                if(g_pFrame)
+            if (bNeedFrame) {
+                if (g_pFrame)
                     av_frame_free(&g_pFrame);
 
 #if FFMPEG_DEMUX
                 g_pFrame = GetNextVideoFrameFFMPEG();
 #else
-                g_pFrame = mpts.GetNextVideoFrameInternal(fileBytePos);
+                g_pFrame = mpts.GetNextVideoFrameInternal(mpts, fileBytePos);
 #endif
 
-                if (g_pFrame)
-                {
+                if (g_pFrame) {
                     framesDecoded++;
 
                     //IncAndClamp(red, redInc, 0.f, 255.f);
@@ -1038,126 +991,144 @@ static bool RunGUI(MpegTS_XML &mpts)
 
                     frameDisplaying++;
 
-                    if(framesDecoded == framesToDecode)
+                    if (framesDecoded == framesToDecode)
                         bNeedFrame = false;
 
-                    float percent = ((float) frameDisplaying / (float)numVideoFrames) *100.f;
-                    seekValue = (int) percent;
+                    float percent = ((float)frameDisplaying / (float)numVideoFrames) * 100.f;
+                    seekValue = (int)percent;
                     seekValueLast = seekValue;
                     bNewFrame = true;
 
-                    if(bNewFrame)
+                    if (bNewFrame)
                         mpts.UpdatePresentationUnits(frameDisplaying);
                 }
             }
         }
 
-        if(g_pFrame)
+        if (g_pFrame)
             WriteFrame(g_stream_ctx[mpts.m_videoStreamIndex].dec_ctx, g_pFrame, 0, g_pTexturePresenter, bNewFrame);
 
         char frameType = ' ';
 
-        if(g_pFrame)
-        {
-            switch(g_pFrame->pict_type)
-            {
+        if (g_pFrame) {
+            switch (g_pFrame->pict_type) {
                 case AV_PICTURE_TYPE_I:
                     frameType = 'I';
-                break;
+                    break;
                 case AV_PICTURE_TYPE_P:
                     frameType = 'P';
-                break;
+                    break;
                 case AV_PICTURE_TYPE_B:
                     frameType = 'B';
-                break;
+                    break;
             }
         }
 
-        ImGui::Text("Displaying:%d of %d, Type:%c, Offset:%llu", frameDisplaying, numVideoFrames, frameType, (int64_t) fileBytePos);
+        ImGui::Text("Displaying:%d of %d, Type:%c, Offset:%llu", frameDisplaying, numVideoFrames, frameType, (int64_t)fileBytePos);
 
         ImGui::End(); // Seek
 
         ImGui::Begin("Frames");
 
-        if (ImGui::CollapsingHeader(mpts.m_videoAccessUnitsPresentation[0].esd.name.c_str()))
-        {
+        if (ImGui::CollapsingHeader(mpts.m_videoAccessUnitsPresentation[0].esd.name.c_str())) {
             unsigned int frame = frameDisplaying;
             unsigned int high = frame + mpts.m_videoAccessUnitsPresentation.size(); // TODO: Make this GOP size
             high = MIN(high, numVideoFrames);
 
+            if (mpts.m_videoAccessUnitsPresentation.size()) {
+                for (unsigned int i = frame, j = 0; i < high; i++, j++) {
+                    AccessUnit& au = mpts.m_videoAccessUnitsPresentation[j];
+
+                    size_t numPackets = 0;
+                    for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
+                        numPackets += j->numPackets;
+
+                    if (ImGui::TreeNode((void*)au.frameNumber, "Frame:%u, Type:%s, PTS:%ld, Packets:%llu, PID:%ld", au.frameNumber, au.frameType.c_str(), au.pts, numPackets, au.esd.pid)) {
+                        if (ImGui::SmallButton("View")) {
+                            if (frame > frameDisplaying) {
+                                framesToDecode = frame - frameDisplaying;
+                                bNeedFrame = true;
+                                framesDecoded = 0;
+                            }
+                        };
+
+                        ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+                        for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++) {
+                            ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%llu, Num Packets:%llu", j->startByteLocation, j->numPackets);
+                        }
+
+                        ImGui::TreePop();
+                    }
+
+                    frame++;
+                }
+            }
+        }
+
+        /*
+            unsigned int frame = frameDisplaying;
+
+            unsigned int high = frame + mpts.m_videoAccessUnitsPresentation.size(); // TODO: Make this GOP size
+
+            high = MIN(high, numVideoFrames);
+
             if(mpts.m_videoAccessUnitsPresentation.size())
             {
-                for(unsigned int i = frame, j=0; i < high; i++, j++)
+                if (ImGui::CollapsingHeader(mpts.m_videoAccessUnitsPresentation[0].esd.name.c_str()))
                 {
-                    AccessUnit &au = mpts.m_videoAccessUnitsPresentation[j];
-
-                    size_t numPackets = 0;
-                    for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
-                        numPackets += j->numPackets;
-
-                    if(ImGui::TreeNode((void*) au.frameNumber, "Frame:%u, Type:%s, PTS:%ld, Packets:%llu, PID:%ld", au.frameNumber, au.frameType.c_str(), au.pts, numPackets, au.esd.pid))
+                    for(unsigned int i = frame; i < high; i++)
                     {
-                        if (ImGui::SmallButton("View"))
-                        {
-                            if(frame > frameDisplaying)
-                            {
-                                framesToDecode = frame - frameDisplaying;
-                                bNeedFrame = true;
-                                framesDecoded = 0;
-                            }
-                        };
+                        AccessUnit &au = mpts.m_videoAccessUnitsPresentation[i];
 
-                        ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-
+                        size_t numPackets = 0;
                         for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
+                            numPackets += j->numPackets;
+
+                        if(ImGui::TreeNode((void*) au.frameNumber, "Frame:%u, Type:%s, PTS:%ld, Packets:%llu, PID:%ld", au.frameNumber, au.frameType.c_str(), au.pts, numPackets, au.esd.pid))
                         {
-                            ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%llu, Num Packets:%llu", j->startByteLocation, j->numPackets);
+                            if (ImGui::SmallButton("View"))
+                            {
+                                if(frame > frameDisplaying)
+                                {
+                                    framesToDecode = frame - frameDisplaying;
+                                    bNeedFrame = true;
+                                    framesDecoded = 0;
+                                }
+                            };
+
+                            ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+                            for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
+                            {
+                                ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%llu, Num Packets:%llu", j->startByteLocation, j->numPackets);
+                            }
+
+                            ImGui::TreePop();
                         }
 
-                        ImGui::TreePop();
+                        frame++;
                     }
-
-                    frame++;
                 }
             }
-        }
+    */
 
     /*
-        unsigned int frame = frameDisplaying;
-
-        unsigned int high = frame + mpts.m_videoAccessUnitsPresentation.size(); // TODO: Make this GOP size
-
-        high = MIN(high, numVideoFrames);
-
-        if(mpts.m_videoAccessUnitsPresentation.size())
-        {
-            if (ImGui::CollapsingHeader(mpts.m_videoAccessUnitsPresentation[0].esd.name.c_str()))
+            frame = 1;
+            if (ImGui::CollapsingHeader("Audio"))
             {
-                for(unsigned int i = frame; i < high; i++)
+                for(std::vector<AccessUnit>::iterator i = mpts.m_audioAccessUnits.begin(); i < mpts.m_audioAccessUnits.end(); i++)
                 {
-                    AccessUnit &au = mpts.m_videoAccessUnitsPresentation[i];
-
                     size_t numPackets = 0;
-                    for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
+                    for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
                         numPackets += j->numPackets;
 
-                    if(ImGui::TreeNode((void*) au.frameNumber, "Frame:%u, Type:%s, PTS:%ld, Packets:%llu, PID:%ld", au.frameNumber, au.frameType.c_str(), au.pts, numPackets, au.esd.pid))
+                    if(ImGui::TreeNode((void*) frame, "Frame:%d, Name:%s, Packets:%d, PID:%ld", frame, i->esd.name.c_str(), numPackets, i->esd.pid))
                     {
-                        if (ImGui::SmallButton("View"))
+                        for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
                         {
-                            if(frame > frameDisplaying)
-                            {
-                                framesToDecode = frame - frameDisplaying;
-                                bNeedFrame = true;
-                                framesDecoded = 0;
-                            }
-                        };
-
-                        ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-
-                        for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++)
-                        {
-                            ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%llu, Num Packets:%llu", j->startByteLocation, j->numPackets);
+                            if (ImGui::TreeNode((void*)(intptr_t)frame, "Byte Location:%d, Num Packets:%d", j->startByteLocation, j->numPackets))
+                                ImGui::TreePop();
                         }
 
                         ImGui::TreePop();
@@ -1166,40 +1137,13 @@ static bool RunGUI(MpegTS_XML &mpts)
                     frame++;
                 }
             }
-        }
-*/
-
-/*
-        frame = 1;
-        if (ImGui::CollapsingHeader("Audio"))
-        {
-            for(std::vector<AccessUnit>::iterator i = mpts.m_audioAccessUnits.begin(); i < mpts.m_audioAccessUnits.end(); i++)
-            {
-                size_t numPackets = 0;
-                for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
-                    numPackets += j->numPackets;
-
-                if(ImGui::TreeNode((void*) frame, "Frame:%d, Name:%s, Packets:%d, PID:%ld", frame, i->esd.name.c_str(), numPackets, i->esd.pid))
-                {
-                    for (std::vector<AccessUnitElement>::iterator j = i->accessUnitElements.begin(); j < i->accessUnitElements.end(); j++)
-                    {
-                        if (ImGui::TreeNode((void*)(intptr_t)frame, "Byte Location:%d, Num Packets:%d", j->startByteLocation, j->numPackets))
-                            ImGui::TreePop();
-                    }
-
-                    ImGui::TreePop();
-                }
-
-                frame++;
-            }
-        }
-*/
+    */
 
         ImGui::End(); // Frames
 #endif
 
-		ImGui::Render();
-		ImGui_ImplGlfwGL3_RenderDrawData(ImGui::GetDrawData());
+        ImGui::Render();
+        ImGui_ImplGlfwGL3_RenderDrawData(ImGui::GetDrawData());
 
         /* Swap front and back buffers */
         glfwSwapBuffers(g_window);
@@ -1210,39 +1154,38 @@ static bool RunGUI(MpegTS_XML &mpts)
         bNewFrame = false;
     }
 
-    if(g_pFrame)
+    if (g_pFrame)
         av_frame_free(&g_pFrame);
 
-    if(g_pTexturePresenter)
+    if (g_pTexturePresenter)
         delete g_pTexturePresenter;
 
-  	ImGui_ImplGlfwGL3_Shutdown();
-	ImGui::DestroyContext();
+    ImGui_ImplGlfwGL3_Shutdown();
+    ImGui::DestroyContext();
 
     CloseOpenGL();
 
     return true;
 }
 
-static int InitFilter(FilteringContext *fctx,
-                      AVStream *st,
-                      AVCodecContext *dec_ctx,
-                      //AVCodecContext *enc_ctx,
+static int InitFilter(FilteringContext* fctx,
+    AVStream* st,
+    AVCodecContext* dec_ctx,
+    //AVCodecContext *enc_ctx,
                       const char *filter_spec)
 {
     char args[512];
     int ret = 0;
 
-    const AVFilter *cur_filter = NULL;
-    AVFilterContext *cur_ctx = NULL;
-    AVFilterContext *prev_ctx = NULL;
+    const AVFilter* cur_filter = NULL;
+    AVFilterContext* cur_ctx = NULL;
+    AVFilterContext* prev_ctx = NULL;
 
-//    AVCodecContext *codec_ctx;
-//    ret = avcodec_parameters_to_context(codec_ctx, st->codecpar);
+    //    AVCodecContext *codec_ctx;
+    //    ret = avcodec_parameters_to_context(codec_ctx, st->codecpar);
 
-    AVFilterGraph *filter_graph = avfilter_graph_alloc();
-    if (!filter_graph)
-    {
+    AVFilterGraph* filter_graph = avfilter_graph_alloc();
+    if (!filter_graph) {
         av_log(NULL, AV_LOG_ERROR, "Can not create filter graph\n");
         ret = AVERROR(ENOMEM);
         goto end;
@@ -1250,14 +1193,12 @@ static int InitFilter(FilteringContext *fctx,
 
     fctx->filter_graph = filter_graph;
 
-    if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-    {
+    if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
         // Create Video Source
         //////////////////////
         cur_filter = avfilter_get_by_name("buffer");
 
-        if (!cur_filter)
-        {
+        if (!cur_filter) {
             av_log(NULL, AV_LOG_ERROR, "Filter video source not found\n");
             ret = AVERROR_UNKNOWN;
             goto end;
@@ -1272,10 +1213,9 @@ static int InitFilter(FilteringContext *fctx,
             st->r_frame_rate.num, st->r_frame_rate.den);
 
         ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "src",
-                                           args, NULL, filter_graph);
+            args, NULL, filter_graph);
 
-        if (ret < 0)
-        {
+        if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Cannot create video source\n");
             goto end;
         }
@@ -1293,31 +1233,27 @@ static int InitFilter(FilteringContext *fctx,
 
         // Perform deinterlacing?
         /////////////////////////
-        if( IsDeinterlacing(fr_code) )
-        {
+        if (IsDeinterlacing(fr_code)) {
             cur_filter = avfilter_get_by_name("yadif");
 
-            if (!cur_filter)
-            {
+            if (!cur_filter) {
                 av_log(NULL, AV_LOG_ERROR, "Filter yadif not found\n");
                 ret = AVERROR_UNKNOWN;
                 goto end;
             }
 
             ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "yadif",
-                                               NULL, NULL, filter_graph);
+                NULL, NULL, filter_graph);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot create yadif filter\n");
                 goto end;
             }
 
             ret = avfilter_link(prev_ctx, 0,
-                                cur_ctx, 0);
+                cur_ctx, 0);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot link yadif filter\n");
                 goto end;
             }
@@ -1331,9 +1267,8 @@ static int InitFilter(FilteringContext *fctx,
 
         // Perform frame rate conversion?
         /////////////////////////////////
-        if(st->r_frame_rate.num != dst.num ||
-           st->r_frame_rate.den != dst.den)
-        {
+        if (st->r_frame_rate.num != dst.num ||
+            st->r_frame_rate.den != dst.den) {
             /*
             st->codec->field_order
 
@@ -1365,15 +1300,13 @@ static int InitFilter(FilteringContext *fctx,
             bool bIsTelecine = false;
             EFrameRateConversionCode fr_code = CalculateFrameRateConversion(st->r_frame_rate, dst, bIsTelecine);
 
-            if(fr_code == kNTSCInverseTelecine_to_PAL ||
-               fr_code == kNTSCInverseTelecine_to_NTSCFilm ||
-               fr_code == kNTSC60pInverseTelecine_to_NTSCFilm ||
-               fr_code == kNTSC60pInverseTelecine_to_PAL)
-            {
+            if (fr_code == kNTSCInverseTelecine_to_PAL ||
+                fr_code == kNTSCInverseTelecine_to_NTSCFilm ||
+                fr_code == kNTSC60pInverseTelecine_to_NTSCFilm ||
+                fr_code == kNTSC60pInverseTelecine_to_PAL) {
                 //double frameRate = 23.976;
                 if (fr_code == EFrameRateConversionCode::kNTSC60pInverseTelecine_to_NTSCFilm ||
-                    fr_code == EFrameRateConversionCode::kNTSC60pInverseTelecine_to_PAL)
-                {
+                    fr_code == EFrameRateConversionCode::kNTSC60pInverseTelecine_to_PAL) {
                     // TODO
                     //wcscpy_s(script, _countof(script), L"TDecimate(cycleR=3, Cycle=5)");
 
@@ -1407,34 +1340,29 @@ static int InitFilter(FilteringContext *fctx,
 
                     prev_ctx = cur_ctx;
                     */
-                }
-                else
-                {
+                } else {
                     //wcscpy_s(script, _countof(script), L"TFM()TDecimate()");
 
                     // Insert FieldMatch
                     cur_filter = avfilter_get_by_name("fieldmatch");
 
-                    if (!cur_filter)
-                    {
+                    if (!cur_filter) {
                         av_log(NULL, AV_LOG_ERROR, "Filter fieldmatch not found\n");
                         ret = AVERROR_UNKNOWN;
                         goto end;
                     }
 
                     ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "fieldmatch",
-                                                       NULL, NULL, filter_graph);
+                        NULL, NULL, filter_graph);
 
-                    if (ret < 0)
-                    {
+                    if (ret < 0) {
                         av_log(NULL, AV_LOG_ERROR, "Cannot create fieldmatch filter\n");
                         goto end;
                     }
 
                     ret = avfilter_link(prev_ctx, 0, cur_ctx, 0);
 
-                    if (ret < 0)
-                    {
+                    if (ret < 0) {
                         av_log(NULL, AV_LOG_ERROR, "Cannot link fieldmatch filter\n");
                         goto end;
                     }
@@ -1444,26 +1372,23 @@ static int InitFilter(FilteringContext *fctx,
                     // Insert Decimate
                     cur_filter = avfilter_get_by_name("decimate");
 
-                    if (!cur_filter)
-                    {
+                    if (!cur_filter) {
                         av_log(NULL, AV_LOG_ERROR, "Filter decimate not found\n");
                         ret = AVERROR_UNKNOWN;
                         goto end;
                     }
 
                     ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "decimate",
-                                                       NULL, NULL, filter_graph);
+                        NULL, NULL, filter_graph);
 
-                    if (ret < 0)
-                    {
+                    if (ret < 0) {
                         av_log(NULL, AV_LOG_ERROR, "Cannot create decimate filter\n");
                         goto end;
                     }
 
                     ret = avfilter_link(prev_ctx, 0, cur_ctx, 0);
 
-                    if (ret < 0)
-                    {
+                    if (ret < 0) {
                         av_log(NULL, AV_LOG_ERROR, "Cannot link decimate filter\n");
                         goto end;
                     }
@@ -1473,15 +1398,12 @@ static int InitFilter(FilteringContext *fctx,
 
                 // Speed up video to 25fps if desired (e.g. NTSC film to PAL conversion)
                 if (fr_code == EFrameRateConversionCode::kNTSCInverseTelecine_to_PAL ||
-                    fr_code == EFrameRateConversionCode::kNTSC60pInverseTelecine_to_PAL)
-                {
+                    fr_code == EFrameRateConversionCode::kNTSC60pInverseTelecine_to_PAL) {
                     //wcscat_s(script, _countof(script), L"AssumeFPS(25, 1, sync_audio=false)");
                     //frameRate = 25.0;
                     dst.num = 25;
                     dst.den = 1;
-                }
-                else
-                {
+                } else {
                     dst.num = 24000;
                     dst.den = 1001;
                 }
@@ -1490,9 +1412,7 @@ static int InitFilter(FilteringContext *fctx,
                 // TODO: code review -- move otu to BuildFilterGraph everything that changes the output frame 
                 //if (m_pTUM->GetFrameRatePassThru() && m_iTranscodeStage == TranscodeStages::kMainContentStage)
                 //    m_pTUM->SetOutputFrameRate(frameRate);
-            }
-            else if (fr_code == kNTSC60p_to_PAL)
-            {
+            } else if (fr_code == kNTSC60p_to_PAL) {
                 /*
                 // Perform frame rate conversion to 50i
                 wcscpy_s(script, _countof(script), L"ChangeFPS(50.00)\n"); // or blend via ConvertFPS
@@ -1509,8 +1429,7 @@ static int InitFilter(FilteringContext *fctx,
             }
 
             cur_filter = avfilter_get_by_name("fps");
-            if (!cur_filter)
-            {
+            if (!cur_filter) {
                 av_log(NULL, AV_LOG_ERROR, "Filter fps not found\n");
                 ret = AVERROR_UNKNOWN;
                 goto end;
@@ -1528,19 +1447,17 @@ static int InitFilter(FilteringContext *fctx,
             snprintf(args, sizeof(args), "fps=%s", fps);
 
             ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "fps",
-                                               args, NULL, filter_graph);
+                args, NULL, filter_graph);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot create fps\n");
                 goto end;
             }
 
             ret = avfilter_link(prev_ctx, 0,
-                                cur_ctx, 0);
+                cur_ctx, 0);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot link fps\n");
                 goto end;
             }
@@ -1554,34 +1471,30 @@ static int InitFilter(FilteringContext *fctx,
 
         // Create avisynth?
         ///////////////////
-        if (g_options.avisynth)
-        {
+        if (g_options.avisynth) {
             cur_filter = avfilter_get_by_name("avisynth");
-            if (!cur_filter)
-            {
+            if (!cur_filter) {
                 av_log(NULL, AV_LOG_ERROR, "Filter avisynth not found\n");
                 ret = AVERROR_UNKNOWN;
                 goto end;
             }
 
             snprintf(args, sizeof(args),
-                     "script=%s",
-                     g_options.avisynth_script);
+                "script=%s",
+                g_options.avisynth_script);
 
             ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "avisynth",
-                                               args, NULL, filter_graph);
+                args, NULL, filter_graph);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot create avisynth\n");
                 goto end;
             }
 
             ret = avfilter_link(prev_ctx, 0,
-                                cur_ctx, 0);
+                cur_ctx, 0);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot link avisynth\n");
                 goto end;
             }
@@ -1595,34 +1508,30 @@ static int InitFilter(FilteringContext *fctx,
 
         // Create Video Scaler?
         ///////////////////////
-        if (enc_ctx->width != st->codecpar->width || enc_ctx->height != st->codecpar->height)
-        {
+        if (enc_ctx->width != st->codecpar->width || enc_ctx->height != st->codecpar->height) {
             cur_filter = avfilter_get_by_name("scale");
-            if (!cur_filter)
-            {
+            if (!cur_filter) {
                 av_log(NULL, AV_LOG_ERROR, "Filter video_scale not found\n");
                 ret = AVERROR_UNKNOWN;
                 goto end;
             }
 
             snprintf(args, sizeof(args),
-                     "width=%d:height=%d",
-                     enc_ctx->width, enc_ctx->height);
+                "width=%d:height=%d",
+                enc_ctx->width, enc_ctx->height);
 
             ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "scale",
-                                               args, NULL, filter_graph);
+                args, NULL, filter_graph);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot create video scaler\n");
                 goto end;
             }
 
             ret = avfilter_link(prev_ctx, 0,
-                                cur_ctx, 0);
+                cur_ctx, 0);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot link video scaler\n");
                 goto end;
             }
@@ -1636,11 +1545,9 @@ static int InitFilter(FilteringContext *fctx,
 
         // Create Video Trim?
         /////////////////////
-        if (g_options.start_time != -1 || g_options.end_time != -1)
-        {
+        if (g_options.start_time != -1 || g_options.end_time != -1) {
             cur_filter = avfilter_get_by_name("trim");
-            if (!cur_filter)
-            {
+            if (!cur_filter) {
                 av_log(NULL, AV_LOG_ERROR, "Filter video_trim not found\n");
                 ret = AVERROR_UNKNOWN;
                 goto end;
@@ -1648,36 +1555,32 @@ static int InitFilter(FilteringContext *fctx,
 
             memset(args, 0, sizeof(args));
 
-            if(g_options.start_time != -1)
-            {
+            if (g_options.start_time != -1) {
                 snprintf(args, sizeof(args),
-                         "start=%d",
-                         g_options.start_time);
+                    "start=%d",
+                    g_options.start_time);
             }
 
-            if(g_options.end_time != -1)
-            {
+            if (g_options.end_time != -1) {
                 char end[32];
                 snprintf(end, sizeof(end),
-                         (g_options.start_time != -1) ? ":end=%d" : "end=%d",
-                         g_options.end_time);
+                    (g_options.start_time != -1) ? ":end=%d" : "end=%d",
+                    g_options.end_time);
                 strcat(args, end);
             }
 
             ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "video_trim",
-                                               args, NULL, filter_graph);
+                args, NULL, filter_graph);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot create video trim\n");
                 goto end;
             }
 
             ret = avfilter_link(prev_ctx, 0,
-                                cur_ctx, 0);
+                cur_ctx, 0);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot link video trim\n");
                 goto end;
             }
@@ -1689,66 +1592,58 @@ static int InitFilter(FilteringContext *fctx,
         // Create Video Sink
         ////////////////////
         cur_filter = avfilter_get_by_name("buffersink");
-        if (!cur_filter)
-        {
+        if (!cur_filter) {
             av_log(NULL, AV_LOG_ERROR, "Filter video sink element not found\n");
             ret = AVERROR_UNKNOWN;
             goto end;
         }
 
         ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "sink",
-                                           NULL, NULL, filter_graph);
-        if (ret < 0)
-        {
+            NULL, NULL, filter_graph);
+        if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Cannot create video sink\n");
             goto end;
         }
 
         ret = av_opt_set_bin(cur_ctx, "pix_fmts",
-                             (uint8_t*)&dec_ctx->pix_fmt, sizeof(dec_ctx->pix_fmt),
-                             //(uint8_t*)&enc_ctx->pix_fmt, sizeof(enc_ctx->pix_fmt),
-                             AV_OPT_SEARCH_CHILDREN);
+            (uint8_t*)&dec_ctx->pix_fmt, sizeof(dec_ctx->pix_fmt),
+            //(uint8_t*)&enc_ctx->pix_fmt, sizeof(enc_ctx->pix_fmt),
+            AV_OPT_SEARCH_CHILDREN);
 
-        if (ret < 0)
-        {
+        if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Cannot set output pixel format\n");
             goto end;
         }
 
         ret = avfilter_link(prev_ctx, 0,
-                            cur_ctx, 0);
+            cur_ctx, 0);
 
-        if (ret < 0)
-        {
+        if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Cannot link video sink\n");
             goto end;
         }
 
         fctx->buffersink_ctx = cur_ctx;
-    }
-    else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
-    {
+    } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
         // Create the audio source
         //////////////////////////
         cur_filter = avfilter_get_by_name("abuffer");
-        if (!cur_filter)
-        {
+        if (!cur_filter) {
             av_log(NULL, AV_LOG_ERROR, "Filter audio source not found\n");
             ret = AVERROR_UNKNOWN;
             goto end;
         }
 
         snprintf(args, sizeof(args),
-                 "time_base=%d/%d:sample_rate=%d:sample_fmt=%s:channel_layout=0x%llx",
-                 st->time_base.num, st->time_base.den, st->codecpar->sample_rate,
-                 av_get_sample_fmt_name((AVSampleFormat) st->codecpar->format),
-                 st->codecpar->channel_layout);
+            "time_base=%d/%d:sample_rate=%d:sample_fmt=%s:channel_layout=0x%llx",
+            st->time_base.num, st->time_base.den, st->codecpar->sample_rate,
+            av_get_sample_fmt_name((AVSampleFormat)st->codecpar->format),
+            st->codecpar->channel_layout);
 
         ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "src",
-                                           args, NULL, filter_graph);
+            args, NULL, filter_graph);
 
-        if (ret < 0)
-        {
+        if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Cannot create audio source\n");
             goto end;
         }
@@ -1760,11 +1655,9 @@ static int InitFilter(FilteringContext *fctx,
 #if DO_AUDIO_TRIM
         // Create audio trim?
         /////////////////////
-        if (g_options.start_time != -1 || g_options.end_time != -1)
-        {
+        if (g_options.start_time != -1 || g_options.end_time != -1) {
             cur_filter = avfilter_get_by_name("atrim");
-            if (!cur_filter)
-            {
+            if (!cur_filter) {
                 av_log(NULL, AV_LOG_ERROR, "Filter audio_trim not found\n");
                 ret = AVERROR_UNKNOWN;
                 goto end;
@@ -1772,36 +1665,32 @@ static int InitFilter(FilteringContext *fctx,
 
             memset(args, 0, sizeof(args));
 
-            if(g_options.start_time != -1)
-            {
+            if (g_options.start_time != -1) {
                 snprintf(args, sizeof(args),
-                         "start=%d",
-                         g_options.start_time);
+                    "start=%d",
+                    g_options.start_time);
             }
 
-            if(g_options.end_time != -1)
-            {
+            if (g_options.end_time != -1) {
                 char end[32];
                 snprintf(end, sizeof(end),
-                         (g_options.start_time != -1) ? ":end=%d" : "end=%d",
-                         g_options.end_time);
+                    (g_options.start_time != -1) ? ":end=%d" : "end=%d",
+                    g_options.end_time);
                 strcat(args, end);
             }
 
             ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "audio_trim",
-                                               args, NULL, filter_graph);
+                args, NULL, filter_graph);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot create audio trim\n");
                 goto end;
             }
 
             ret = avfilter_link(prev_ctx, 0,
-                                cur_ctx, 0);
+                cur_ctx, 0);
 
-            if (ret < 0)
-            {
+            if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR, "Cannot link audio trim\n");
                 goto end;
             }
@@ -1813,35 +1702,30 @@ static int InitFilter(FilteringContext *fctx,
         // Create the audio sink
         ////////////////////////
         cur_filter = avfilter_get_by_name("abuffersink");
-        if (!cur_filter)
-        {
+        if (!cur_filter) {
             av_log(NULL, AV_LOG_ERROR, "Filter audio sink not found\n");
             ret = AVERROR_UNKNOWN;
             goto end;
         }
 
         ret = avfilter_graph_create_filter(&cur_ctx, cur_filter, "sink",
-                                           NULL, NULL, filter_graph);
+            NULL, NULL, filter_graph);
 
-        if (ret < 0)
-        {
+        if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Cannot create audio sink\n");
             goto end;
         }
 
         ret = avfilter_link(prev_ctx, 0,
-                            cur_ctx, 0);
+            cur_ctx, 0);
 
-        if (ret < 0)
-        {
+        if (ret < 0) {
             av_log(NULL, AV_LOG_ERROR, "Cannot link audio sink\n");
             goto end;
         }
 
         fctx->buffersink_ctx = cur_ctx;
-    }
-    else
-    {
+    } else {
         ret = AVERROR_UNKNOWN;
         goto end;
     }
@@ -1855,21 +1739,20 @@ end:
 
 static int InitFilters(void)
 {
-    const char *filter_spec;
+    const char* filter_spec;
     unsigned int i;
     int ret;
 
-    g_filter_ctx = (FilteringContext *)av_malloc_array(g_ifmt_ctx->nb_streams, sizeof(*g_filter_ctx));
+    g_filter_ctx = (FilteringContext*)av_malloc_array(g_ifmt_ctx->nb_streams, sizeof(*g_filter_ctx));
 
     if (!g_filter_ctx)
         return AVERROR(ENOMEM);
 
 #ifdef DEBUG
-    char p_graph[2048] = {0};
+    char p_graph[2048] = { 0 };
 #endif
 
-    for (i = 0; i < g_ifmt_ctx->nb_streams; i++)
-    {
+    for (i = 0; i < g_ifmt_ctx->nb_streams; i++) {
         g_filter_ctx[i].buffersrc_ctx = NULL;
         g_filter_ctx[i].buffersink_ctx = NULL;
         g_filter_ctx[i].filter_graph = NULL;
@@ -1884,10 +1767,10 @@ static int InitFilters(void)
             filter_spec = "anull"; /* passthrough (dummy) filter for audio */
 
         ret = InitFilter(&g_filter_ctx[i],
-                          g_ifmt_ctx->streams[i],
-                          //g_stream_ctx[i].enc_ctx,
-                          g_stream_ctx[i].dec_ctx,
-                          filter_spec);
+            g_ifmt_ctx->streams[i],
+            //g_stream_ctx[i].enc_ctx,
+            g_stream_ctx[i].dec_ctx,
+            filter_spec);
 
         if (ret)
             return ret;
@@ -1903,20 +1786,19 @@ static int InitFilters(void)
 // It all starts here
 int main(int argc, char* argv[])
 {
-//    DoMyXMLTest(argv[1]);
-//    DoMyXMLTest2();
-//    return 0;
+    //    DoMyXMLTest(argv[1]);
+    //    DoMyXMLTest2();
+    //    return 0;
 
-/*
-    if(1)
-    {
-        DoFFMpegOpenGLTest("F:\\streams\\mpeg2\\muppets_take_manhattan.mpg");
-        return 0;
-    }
-*/
+    /*
+        if(1)
+        {
+            DoFFMpegOpenGLTest("F:\\streams\\mpeg2\\muppets_take_manhattan.mpg");
+            return 0;
+        }
+    */
 
-    if (0 == argc)
-    {
+    if (0 == argc) {
         fprintf(stderr, "Usage: %s input.xml\n", argv[0]);
         fprintf(stderr, "  The file input.xml is generated by mp2ts_parser\n");
         return 1;
@@ -1926,18 +1808,16 @@ int main(int argc, char* argv[])
 
     // Open the source xml file that describes the MP2TS
     tinyxml2::XMLDocument doc;
-	tinyxml2::XMLError xmlError = doc.LoadFile(argv[1]);
+    tinyxml2::XMLError xmlError = doc.LoadFile(argv[1]);
 
-    if(tinyxml2::XML_SUCCESS != xmlError)
-    {
+    if (tinyxml2::XML_SUCCESS != xmlError) {
         fprintf(stderr, "Error: TinyXml2 could not open file: %s\n", argv[1]);
         return 1;
     }
 
     tinyxml2::XMLElement* root = doc.FirstChildElement("file");
 
-    if(nullptr == root)
-    {
+    if (nullptr == root) {
         fprintf(stderr, "Error: %s does not contain a <file> element at the start!\n", argv[1]);
         return 1;
     }
@@ -1952,17 +1832,16 @@ int main(int argc, char* argv[])
     // Build current access units
     mpts.ParsePacketList(root);
 
-    if(0 != OpenInputFile(mpts))
+    if (0 != OpenInputFile(mpts))
         return 1;
 
     inputFile = fopen(mpts.m_mpegTSDescriptor.fileName.c_str(), "rb");
 
-    if(0 != InitFilters())
+    if (0 != InitFilters())
         return 1;
 
     // Show as GUI
-    if(RunGUI(mpts))
-    {
+    if (RunGUI(mpts)) {
         CloseInputFile(mpts);
         fclose(inputFile);
         return 0;
