@@ -1055,7 +1055,11 @@ static bool RunGUI(MpegTS_XML &mpts)
                         ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
                         for (std::vector<AccessUnitElement>::iterator j = au.accessUnitElements.begin(); j < au.accessUnitElements.end(); j++) {
-                            ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%llu, Num Packets:%llu", j->startByteLocation, j->numPackets);
+                            if ("I" == au.frameType) {
+                                ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Closed GOP:%d Byte Location:%llu, Num Packets:%llu", au.closed_gop, j->startByteLocation, j->numPackets);
+                            } else {
+                                ImGui::TreeNodeEx((void*)(intptr_t)frame, nodeFlags, "Byte Location:%llu, Num Packets:%llu", j->startByteLocation, j->numPackets);
+                            }
                         }
 
                         ImGui::TreePop();
