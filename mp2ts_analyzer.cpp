@@ -432,6 +432,9 @@ static int FindData(uint8_t *packet, int packetSize)
 {
     uint8_t* p = packet;
 
+    if (192 == packetSize)
+        increment_ptr(p, 4);
+
     if (0x47 != *p) {
         fprintf(stderr, "Error: Packet does not start with 0x47\n");
         return -1;
